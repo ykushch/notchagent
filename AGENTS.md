@@ -14,6 +14,8 @@ swift build                      # build all targets
 swift build --target HerdrClient # build just the core library (fast lane)
 swift test                       # run the full swift-testing suite (needs ALL targets to compile)
 swift run notchctl list          # dogfood the core against live herdr
+swift run notchctl sessions      # list herdr sessions + their real socket paths
+swift run notchctl sessions --remote workbox   # same, over ssh
 swift run NotchApp               # launch the notch UI (accessory app; no dock icon)
 ```
 
@@ -25,19 +27,28 @@ swift run NotchApp               # launch the notch UI (accessory app; no dock i
 
 | Target | Kind | Contents |
 | --- | --- | --- |
-| `HerdrClient` | library | Socket client, Codable models, state store, prompt classifier, action layer. The whole M1 core. |
-| `notchctl` | executable | Headless CLI harness that dogfoods the core (`list`/`watch`/`read`/`resolve`/`reply`/`jump`). |
-| `NotchApp` | executable | The notch `NSPanel` UI (accessory app). Binds to `HerdrClient`. |
+| `HerdrClient` | library | Socket client, Codable models, state store, prompt classifier, action layer, session discovery + SSH tunnelling. The whole M1 core. |
+| `notchctl` | executable | Headless CLI harness that dogfoods the core (`list`/`sessions`/`watch`/`read`/`resolve`/`reply`/`jump`). |
+| `NotchApp` | executable | The notch `NSPanel` UI (accessory app). Owns the `SessionRegistry`/`SessionRuntime`s that bind to `HerdrClient`. |
 
 ## Architecture (data flow)
 
 ```
-herdr server (owns PTYs + agent state)
-    │ newline-delimited JSON over Unix socket (~/.config/herdr/herdr.sock)
+herdr server(s)  — local default, local named sessions, remote hosts over SSH
+    │ newline-delimited JSON over a Unix socket
+    │ local:  ~/.config/herdr/herdr.sock  (named: ~/.config/herdr/sessions/<n>/herdr.sock)
+    │ remote: SSHTunnel forwards the REMOTE socket to a per-user temp socket,
+    │         so everything below is identical for local and remote
     │
 HerdrClient.request()  → connect-per-call (herdr closes socket after one req/resp)
 HerdrClient.events()   → ONE long-lived connection, reconnects with backoff
     │
+    ▼
+SessionRegistry (@MainActor) → one SessionRuntime per herdr server, keyed by session id
+    │                           + one SSHTunnel per remote session
+    ▼
+SessionRuntime  (transport + store + coordinator for ONE server; reports
+    │            transitions upward, never touches presentation)
     ▼
 StateStore (@MainActor @Observable)  → hydrate(snapshot) then apply(event)
     │
@@ -65,13 +76,57 @@ NotchApp UI (NSPanel + SwiftUI)  /  notchctl CLI
   and is re-derived on every (re)connect. Do *not* add `pane.output_matched` to
   that set — herdr requires it per-pane WITH a `source` field, and one bad entry
   makes herdr reject the *entire* subscribe batch (`invalid_request`) so no events flow.
-- **Status is driven by POLLING, not events.** On the live build,
-  `pane_agent_status_changed` events are sparse/absent (a pane can sit `blocked`
-  and never emit one), but `session.snapshot` always has correct `agent_status`.
-  So `NotchViewModel` polls the snapshot every ~1.5s and calls
-  `StateStore.reconcile(_:)` (the primary status path); the event stream is only an
-  accelerator + new-pane detector. If you ever see the UI "frozen," suspect the
-  event assumption — verify with `notchctl list` (pure snapshot path).
+- **Status is driven by POLLING, not events — because herdr's events are
+  themselves polls.** Read the herdr source before "optimising" this away:
+  `src/api/server.rs` runs each subscribe connection as
+  `loop { poll every subscription; sleep(100ms) }` (`CONNECTION_POLL_INTERVAL`), and
+  `ActiveAgentStatusChangedSubscription::poll_result` in `src/api/subscriptions.rs`
+  reads the event hub and then **falls back to `pane_get(pane_id)`**, diffing the
+  status itself. So a per-pane status subscription is not push — it is herdr
+  re-reading that one pane ten times a second on our behalf. One `session.snapshot`
+  covers every pane in a session in a single round-trip, which is strictly cheaper
+  on both sides. `SessionRuntime` therefore polls the snapshot and calls
+  `StateStore.reconcileTransitions(_:)` (the primary status path); the event stream is
+  only an accelerator + new-pane detector.
+  (Historical note: this used to be justified by `pane_agent_status_changed` being
+  "sparse/absent". That is no longer true as of 0.7.5 — the server-side `pane_get`
+  backstop is exactly what makes the events reliable. The cost argument is the real
+  reason, and it still holds.)
+  Consequently `StateStore.currentSubscriptions(includePerPaneStatus:)` drops the
+  per-pane entries unless a session owns focused detail: the global
+  `pane.created`/`exited`/`agent_detected` subscriptions resolve to
+  `ActiveSubscription::Event`, a pure event-hub read that costs herdr nothing extra.
+  Expanded overview still gives every visible session the fast snapshot cadence;
+  visibility and selected-detail subscription cost are deliberately separate.
+  `SessionRuntime` restarts only its event stream when selected detail changes;
+  polling, interaction state, and drafts stay intact.
+  If you ever see the UI "frozen," verify with `notchctl list` (pure snapshot path).
+- **A pane id is only unique within one server.** Every herdr names its first pane
+  `w1:p1`, so once more than one session is tracked, anything that identifies a pane
+  across sessions must use `AgentRef {sessionID, paneID}` — selections, SwiftUI row
+  identity (`InteractionAttentionDisplayModel.id`), and action routing all do.
+  `StateStore` and `InteractionCoordinator` stay deliberately pane-keyed and
+  single-server; aggregation happens above them in `NotchViewModel`.
+- **Sessions are enumerated by the CLI, not the socket API.** There is no
+  `session.list` method — `herdr session list --json` is the only authority, and it
+  is the only way to learn a session's real socket path. Note the default session's
+  socket is `~/.config/herdr/herdr.sock`, **not** under `sessions/`; deriving a path
+  from the session name alone is wrong for it (`SocketPath.forSession` is a fallback
+  for when the CLI is missing). For a remote host the same command over ssh is what
+  yields the absolute remote socket path, which `ssh -L` needs because it does not
+  tilde-expand the remote side.
+- **Remote support is an SSH socket forward, nothing more.** herdr exposes no remote
+  API; `herdr --remote` is a terminal UI attach whose server stays on the far host.
+  `SSHTunnel` runs `ssh -N -L <local>:<remote> <target>` and everything downstream
+  connects to an ordinary local socket. `BatchMode=yes` is deliberate — a GUI app
+  must fail fast with an explainable error rather than block on a passphrase prompt
+  it cannot answer. Report a dead tunnel as a tunnel problem, never as "herdr isn't
+  running": that sends the user looking on the wrong machine. Tunnel and discovery
+  commands share a per-user OpenSSH control socket. The tunnel may be the mux master
+  but must not use `ControlPersist` (it would detach from process supervision);
+  discovery uses `ControlMaster=no`, so it can reuse a tunnel but never leaves a
+  background master. Local sessions are rediscovered every 10s, while remote
+  listings run every 60s and on configuration changes.
 - **Interactions are pane-scoped.** `InteractionCoordinator` keeps blocked
   interactions, drafts, errors, read revisions, and response/settle phases keyed
   by pane ID. A busy pane never suppresses another pane's refresh. Selected panes

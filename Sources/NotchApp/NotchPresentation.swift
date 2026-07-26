@@ -31,6 +31,17 @@ enum NotchPresentation: Sendable, Equatable {
         guard case .focused(let context) = self else { return false }
         return context.preservesResolvedSelection
     }
+    /// Automatic attention changes may open detail only from the compact state.
+    /// Overview and focused detail reflect an explicit user context and stay put.
+    var allowsAutomaticFocus: Bool {
+        if case .compact = self { return true }
+        return false
+    }
+    /// Auto-expand-on-done may reveal overview unless that would discard detail
+    /// the user opened or interacted with.
+    var allowsAutomaticOverview: Bool {
+        !preservesResolvedSelection
+    }
 
     mutating func markUserEngaged() {
         guard case .focused(var context) = self else { return }

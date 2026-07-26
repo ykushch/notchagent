@@ -369,10 +369,25 @@ public final class StateStore {
     ///   soft "maybe stuck" signal; subscribing to it wrong previously broke the
     ///   entire event stream (the pill never updated). Add it back only as a
     ///   per-pane sub with a valid `source` if/when we consume it.
-    public func currentSubscriptions() -> [Subscription] {
-        var subs = panes.keys.sorted().map {
-            Subscription(type: "pane.agent_status_changed", paneID: $0)
-        }
+    /// - Parameter includePerPaneStatus: whether to subscribe to each pane's
+    ///   status. Pass `false` for a background or remote session — see below.
+    ///
+    /// **Per-pane status subscriptions are not free.** herdr's subscribe loop runs
+    /// every 100ms, and `ActiveAgentStatusChangedSubscription` falls back to a
+    /// `pane_get` for its pane whenever the event hub is quiet — so N subscribed
+    /// panes cost herdr N reads ten times a second, per connected client. The
+    /// global lifecycle subscriptions below are plain event-hub reads and cost
+    /// nothing extra.
+    ///
+    /// Dropping the per-pane entries therefore makes a background session nearly
+    /// free while losing only latency, never correctness: status still arrives on
+    /// the snapshot poll, which is the primary path anyway.
+    public func currentSubscriptions(includePerPaneStatus: Bool = true) -> [Subscription] {
+        var subs = includePerPaneStatus
+            ? panes.keys.sorted().map {
+                Subscription(type: "pane.agent_status_changed", paneID: $0)
+            }
+            : []
         subs.append(Subscription(type: "pane.agent_detected"))
         subs.append(Subscription(type: "pane.created"))
         subs.append(Subscription(type: "pane.exited"))

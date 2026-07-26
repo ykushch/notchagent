@@ -100,6 +100,11 @@ final class Settings {
     private let defaults: UserDefaults
     var socketPathOverride: String? { didSet { defaults.set(socketPathOverride, forKey: Keys.socketPathOverride) } }
     var sessionName: String? { didSet { defaults.set(sessionName, forKey: Keys.sessionName) } }
+    /// Remote herdr hosts to track alongside the local sessions, each reached
+    /// through an SSH-forwarded socket.
+    var remoteHosts: [RemoteHostConfiguration] {
+        didSet { defaults.set(try? JSONEncoder().encode(remoteHosts), forKey: Keys.remoteHosts) }
+    }
     var autoExpandOnDone: Bool { didSet { defaults.set(autoExpandOnDone, forKey: Keys.autoExpandOnDone) } }
     var soundEnabled: Bool { didSet { defaults.set(soundEnabled, forKey: Keys.soundEnabled) } }
     var soundPack: String { didSet { defaults.set(soundPack, forKey: Keys.soundPack) } }
@@ -119,6 +124,8 @@ final class Settings {
         self.defaults = defaults
         socketPathOverride = defaults.string(forKey: Keys.socketPathOverride)
         sessionName = defaults.string(forKey: Keys.sessionName)
+        remoteHosts = (defaults.data(forKey: Keys.remoteHosts)
+            .flatMap { try? JSONDecoder().decode([RemoteHostConfiguration].self, from: $0) }) ?? []
         autoExpandOnDone = defaults.object(forKey: Keys.autoExpandOnDone) as? Bool ?? false
         soundEnabled = defaults.object(forKey: Keys.soundEnabled) as? Bool ?? true
         soundPack = defaults.string(forKey: Keys.soundPack) ?? "default"
@@ -138,10 +145,35 @@ final class Settings {
         skippedUpdateVersion = defaults.string(forKey: Keys.skippedUpdateVersion)
     }
 
+    /// A socket to pin the notch to, or nil to discover and track every running
+    /// session.
+    ///
+    /// The name-derived path is a fallback: `SessionDirectory` reports the
+    /// authoritative `socket_path`, and notably the default session's socket is
+    /// *not* under `sessions/`.
     func resolvedSocketPath() -> String? {
-        if let path = socketPathOverride, !path.isEmpty { return path }
+        resolvedSession()?.socketPath
+    }
+
+    /// A pinned session with its real identity. Keeping the name here prevents a
+    /// named session from being presented later as the local default.
+    func resolvedSession() -> ResolvedSession? {
+        if let path = socketPathOverride, !path.isEmpty {
+            let configuredName = sessionName.flatMap { $0.isEmpty ? nil : $0 }
+            let name = path == SocketPath.defaultPath
+                ? SessionDescriptor.defaultSessionName
+                : configuredName ?? "custom"
+            return ResolvedSession(local: SessionDescriptor(
+                kind: .local(name: name),
+                serverSocketPath: path,
+                isDefault: name == SessionDescriptor.defaultSessionName))
+        }
         if let sessionName, !sessionName.isEmpty {
-            return NSString(string: "~/.config/herdr/sessions/\(sessionName)/herdr.sock").expandingTildeInPath
+            let path = SocketPath.forSession(sessionName)
+            return ResolvedSession(local: SessionDescriptor(
+                kind: .local(name: sessionName),
+                serverSocketPath: path,
+                isDefault: sessionName == SessionDescriptor.defaultSessionName))
         }
         return nil
     }
@@ -183,6 +215,7 @@ final class Settings {
     private enum Keys {
         static let socketPathOverride = "socketPathOverride"
         static let sessionName = "sessionName"
+        static let remoteHosts = "remoteHosts"
         static let autoExpandOnDone = "autoExpandOnDone"
         static let soundEnabled = "soundEnabled"
         static let soundPack = "soundPack"

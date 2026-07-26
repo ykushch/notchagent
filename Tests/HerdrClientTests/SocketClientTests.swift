@@ -42,6 +42,16 @@ struct SocketPathTests {
         let p = SocketPath.resolve(environment: ["HERDR_SOCKET_PATH": "", "HERDR_SESSION": ""])
         #expect(p == SocketPath.defaultPath)
     }
+
+    @Test("the default session is NOT under sessions/")
+    func defaultSessionIsNotNested() {
+        // herdr puts the default session's socket at ~/.config/herdr/herdr.sock.
+        // Deriving it from the name was wrong for the most common session of all.
+        #expect(SocketPath.forSession("default") == SocketPath.defaultPath)
+        #expect(SocketPath.forSession("") == SocketPath.defaultPath)
+        #expect(SocketPath.resolve(environment: ["HERDR_SESSION": "default"])
+            == SocketPath.defaultPath)
+    }
 }
 
 @Suite("Backoff policy")

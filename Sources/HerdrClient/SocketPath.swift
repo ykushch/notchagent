@@ -20,14 +20,25 @@ public enum SocketPath {
             return NSString(string: fromEnv).expandingTildeInPath
         }
         if let session = environment["HERDR_SESSION"], !session.isEmpty {
-            return NSString(string: "~/.config/herdr/sessions/\(session)/herdr.sock")
-                .expandingTildeInPath
+            return forSession(session)
         }
         return defaultPath
     }
 
-    /// Resolve a socket path for a named session (used by the multi-session switcher, spec 10c).
+    /// Best-effort socket path for a named session.
+    ///
+    /// **Fallback only.** herdr's `session list --json` reports the authoritative
+    /// `socket_path`; use `SessionDirectory.localSessions()` whenever the CLI is
+    /// reachable. This exists for when it isn't.
+    ///
+    /// Note the special case: herdr does *not* put the default session under
+    /// `sessions/` — its socket is `~/.config/herdr/herdr.sock`. Deriving a path
+    /// from the name alone was wrong for the most common session of all.
     public static func forSession(_ name: String) -> String {
-        NSString(string: "~/.config/herdr/sessions/\(name)/herdr.sock").expandingTildeInPath
+        guard !name.isEmpty, name != SessionDescriptor.defaultSessionName else {
+            return defaultPath
+        }
+        return NSString(string: "~/.config/herdr/sessions/\(name)/herdr.sock")
+            .expandingTildeInPath
     }
 }

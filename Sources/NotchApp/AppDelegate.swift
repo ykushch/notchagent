@@ -1,5 +1,4 @@
 import AppKit
-import HerdrClient
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -13,7 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let settings = Settings()
-        let model = NotchViewModel(client: HerdrClient(socketPath: settings.resolvedSocketPath()))
+        // A nil socket means "track every running session"; an explicit override
+        // still pins the notch to exactly that server.
+        let model = NotchViewModel(pinnedSession: settings.resolvedSession())
         let sound = SoundEngine(settings: settings)
         let updates = UpdateChecker(settings: settings)
         model.settings = settings
@@ -31,9 +32,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menuBar = MenuBarController(
             settings: settings,
             updates: updates,
+            registry: model.registry,
             onSessionChange: { [weak model, weak settings] in
                 guard let model, let settings else { return }
-                model.reconnect(socketPath: settings.resolvedSocketPath())
+                model.reconnect(pinnedSession: settings.resolvedSession())
+            },
+            onRemoteHostsChange: { [weak model] in
+                model?.remoteHostsDidChange()
             },
             onToggleNotch: { [weak model] in model?.toggle() }
         )

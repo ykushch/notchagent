@@ -371,15 +371,15 @@ struct InteractionDisplayModelTests {
             workspaceLabel: "release", status: .blocked, state: nil,
             isSelected: false)
         #expect(AttentionRollupDisplay.pillTaskTitle(
-            items: [ready, other], selectedPaneID: "w1:p2") == "release")
+            items: [ready, other], selected: other.ref) == "release")
         #expect(AttentionRollupDisplay.pillTaskTitle(
-            items: [ready, other], selectedPaneID: nil) == "project")
+            items: [ready, other], selected: nil) == "project")
         let working = InteractionAttentionDisplayModel(
             paneID: "w1:p3", taskTitle: "Background work", agentName: "claude",
             workspaceLabel: "project", status: .working, state: nil,
             isSelected: false)
         #expect(AttentionRollupDisplay.pillTaskTitle(
-            items: [working], selectedPaneID: "w1:p3") == nil)
+            items: [working], selected: working.ref) == nil)
         let finished = InteractionAttentionDisplayModel(
             paneID: "w1:p4", taskTitle: "Auth fix", agentName: "codex",
             workspaceLabel: "project", status: .done, state: nil,

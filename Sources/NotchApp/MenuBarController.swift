@@ -8,17 +8,24 @@ final class MenuBarController: NSObject {
     private let settings: Settings
     private let updates: UpdateChecker
     private let onSessionChange: () -> Void
+    private let onRemoteHostsChange: () -> Void
     private let onToggleNotch: () -> Void
+    /// Live session state, so Settings can show what each session is doing.
+    private weak var registry: SessionRegistry?
 
     init(
         settings: Settings,
         updates: UpdateChecker,
+        registry: SessionRegistry?,
         onSessionChange: @escaping () -> Void,
+        onRemoteHostsChange: @escaping () -> Void,
         onToggleNotch: @escaping () -> Void
     ) {
         self.settings = settings
         self.updates = updates
+        self.registry = registry
         self.onSessionChange = onSessionChange
+        self.onRemoteHostsChange = onRemoteHostsChange
         self.onToggleNotch = onToggleNotch
     }
 
@@ -157,7 +164,12 @@ final class MenuBarController: NSObject {
             settings: settings,
             updates: updates,
             onSessionChange: onSessionChange,
-            availableSessions: Self.discoverSessions())
+            onRemoteHostsChange: onRemoteHostsChange,
+            availableSessions: registry?.runtimes
+                .filter { !$0.descriptor.isRemote && !$0.descriptor.isDefault }
+                .map(\.descriptor.kind.name)
+                .sorted() ?? [],
+            registry: registry)
         let window = NSWindow(contentViewController: NSHostingController(rootView: view))
         window.title = "Notch Agent Settings"
         window.styleMask = [.titled, .closable]
@@ -166,15 +178,6 @@ final class MenuBarController: NSObject {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow = window
-    }
-
-    private static func discoverSessions() -> [String] {
-        let base = NSString(string: "~/.config/herdr/sessions").expandingTildeInPath
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: base) else { return [] }
-        return names.filter { name in
-            var directory: ObjCBool = false
-            return FileManager.default.fileExists(atPath: (base as NSString).appendingPathComponent(name), isDirectory: &directory) && directory.boolValue
-        }.sorted()
     }
 
     private static func buildProvenanceTitle(bundle: Bundle = .main) -> String {

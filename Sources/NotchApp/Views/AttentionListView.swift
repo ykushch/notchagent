@@ -3,19 +3,19 @@ import SwiftUI
 
 struct AttentionListView: View {
     let items: [InteractionAttentionDisplayModel]
-    let select: (String) -> Void
-    let jump: (String) -> Void
-    @State private var hoveredPaneID: String?
+    let select: (AgentRef) -> Void
+    let jump: (AgentRef) -> Void
+    @State private var hoveredRef: AgentRef?
 
     var body: some View {
         LazyVStack(spacing: 6) {
             ForEach(items) { item in
                 HStack(spacing: 4) {
-                    Button { select(item.paneID) } label: { row(item) }
+                    Button { select(item.ref) } label: { row(item) }
                         .buttonStyle(.plain)
                         .accessibilityLabel(item.accessibilityLabel)
                         .accessibilityHint("Show this agent's pending interaction")
-                    Button("Jump") { jump(item.paneID) }
+                    Button("Jump") { jump(item.ref) }
                         .buttonStyle(.plain).font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.cyan).padding(.horizontal, 6)
                         .accessibilityLabel(
@@ -24,13 +24,13 @@ struct AttentionListView: View {
                 .padding(6)
                 .background(RoundedRectangle(cornerRadius: 9).fill(
                     item.isSelected ? .white.opacity(0.14)
-                        : hoveredPaneID == item.paneID
+                        : hoveredRef == item.ref
                             ? .white.opacity(0.10) : .white.opacity(0.055)))
                 .overlay(RoundedRectangle(cornerRadius: 9).stroke(
-                    hoveredPaneID == item.paneID ? .white.opacity(0.10) : .clear))
+                    hoveredRef == item.ref ? .white.opacity(0.10) : .clear))
                 .onHover { hovering in
-                    hoveredPaneID = hovering ? item.paneID
-                        : hoveredPaneID == item.paneID ? nil : hoveredPaneID
+                    hoveredRef = hovering ? item.ref
+                        : hoveredRef == item.ref ? nil : hoveredRef
                 }
             }
         }
@@ -43,6 +43,20 @@ struct AttentionListView: View {
                 HStack {
                     Text(item.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
                     Spacer()
+                    // Only set when more than one session is tracked — otherwise
+                    // every row would carry the same redundant badge.
+                    if let sessionLabel = item.sessionLabel {
+                        Label {
+                            Text(sessionLabel).lineLimit(1)
+                        } icon: {
+                            Image(systemName: item.isRemote ? "network" : "rectangle.on.rectangle")
+                        }
+                        .labelStyle(.titleAndIcon)
+                        .font(.system(size: 7, weight: .bold, design: .rounded))
+                        .foregroundStyle(.orange.opacity(0.95))
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(Capsule().fill(.orange.opacity(0.14)))
+                    }
                     Text(item.agentName.uppercased())
                         .font(.system(size: 7, weight: .bold, design: .rounded))
                         .foregroundStyle(.cyan.opacity(0.9))

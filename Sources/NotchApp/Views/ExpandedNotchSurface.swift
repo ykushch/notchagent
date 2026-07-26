@@ -141,12 +141,11 @@ private struct NotchFocusedSurface: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    if let item = snapshot.selectedItem,
-                       let paneID = model.selectedPaneID {
+                    if let item = snapshot.selectedItem {
                         if let notice = model.jumpNotice {
                             JumpNoticeBanner(model: model, notice: notice)
                         }
-                        FocusedSessionHeader(model: model, paneID: paneID, item: item)
+                        FocusedSessionHeader(model: model, item: item)
                         FocusedInteractionContent(model: model, item: item)
                     } else {
                         ProgressView("Loading agent…")
@@ -179,7 +178,6 @@ private struct NotchFocusedSurface: View {
 
 private struct FocusedSessionHeader: View {
     @Bindable var model: NotchViewModel
-    let paneID: String
     let item: InteractionAttentionDisplayModel
 
     var body: some View {
@@ -205,7 +203,7 @@ private struct FocusedSessionHeader: View {
                 Text(freshness).foregroundStyle(.cyan.opacity(0.62))
             }
             AgentModeControl(model: model)
-            Button("Jump") { model.jump(paneID) }
+            Button("Jump") { model.jump(item.ref) }
                 .foregroundStyle(.cyan)
         }
         .font(.system(size: 9, weight: .medium))

@@ -1,0 +1,15 @@
+{
+  "local-session-list.json": {
+    "provenance": "live capture",
+    "command": "herdr session list --json",
+    "herdr_version": "0.7.5",
+    "protocol": 17,
+    "captured_on": "macOS 25.5.0",
+    "note": "The default session's socket_path is ~/.config/herdr/herdr.sock, NOT under sessions/. This is the case SocketPath.forSession used to get wrong."
+  },
+  "multi-session-list.json": {
+    "provenance": "derived",
+    "derived_from": "local-session-list.json",
+    "note": "Same shape as the live capture, extended with a named session and a stopped session. Creating real named sessions requires launching interactive herdr servers, so the extra entries mirror the documented `herdr session list` columns (name/status/directory/socket) rather than being captured."
+  }
+}

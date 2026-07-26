@@ -46,7 +46,7 @@ final class HotkeyMonitor {
     }
 
     fileprivate func handleKey(keyCode: Int64, flags: NSEvent.ModifierFlags, characters: String?) -> Bool {
-        guard viewModel.selectedPaneID != nil else { return false }
+        guard viewModel.selected != nil else { return false }
         let relevant: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
         guard flags.intersection(relevant) == settings.hotkeyModifier.flags else { return false }
         switch keyCode {

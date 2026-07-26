@@ -12,6 +12,18 @@ enum CLI {
         if let i = args.firstIndex(where: { $0 == "--sock" || $0 == "--socket" }), args.indices.contains(i + 1) {
             explicitSocket = args[i + 1]; args.removeSubrange(i...i + 1)
         }
+        // `--session <name>` resolves through herdr's own session list, so it
+        // works for the default session too (whose socket is not under sessions/).
+        if let i = args.firstIndex(of: "--session"), args.indices.contains(i + 1) {
+            let name = args[i + 1]
+            args.removeSubrange(i...i + 1)
+            guard let session = try? SessionDirectory().localSessions()
+                .first(where: { $0.kind.name == name }) else {
+                fputs("notchctl: no local herdr session named '\(name)'\n", stderr)
+                exit(1)
+            }
+            explicitSocket = session.serverSocketPath
+        }
         guard let command = args.first else { usage(); return }
         let client = HerdrClient(socketPath: explicitSocket)
         do {
@@ -20,6 +32,7 @@ enum CLI {
             case "dry-run": guard args.count > 2 else { throw CLIError.usage("dry-run requires a pane id and intent") }; try await dryRun(client, pane: args[1], args: Array(args.dropFirst(2)))
             case "inspect": guard args.count > 1 else { throw CLIError.usage("inspect requires a fixture directory or detection file") }; try inspect(path: args[1], args: Array(args.dropFirst(2)))
             case "list": try await list(client)
+            case "sessions": try sessions(remote: optionalOption("--remote", in: args))
             case "read": guard args.count > 1 else { throw CLIError.usage("read requires a pane id") }; try await read(client, pane: args[1])
             case "capture": guard args.count > 1 else { throw CLIError.usage("capture requires a pane id and --output DIR") }; try await capture(client, pane: args[1], args: args)
             case "extract": guard args.count > 1 else { throw CLIError.usage("extract requires a capture directory, --annotations FILE, and --output DIR") }; try extract(capturePath: args[1], args: args)
@@ -37,6 +50,17 @@ enum CLI {
         if jsonOutput { printJSON(result); return }
         for pane in snapshot.uniquePanes {
             print("\(pad(pane.paneID, 18)) \(pad(pane.agent ?? "—", 10)) \(pane.agentStatus.rawValue) \(pane.title ?? "")")
+        }
+    }
+
+    /// Dogfoods session discovery. `--remote <target>` lists a remote host's
+    /// sessions over ssh, which is also how we learn their absolute socket paths.
+    static func sessions(remote target: String?) throws {
+        let directory = SessionDirectory()
+        let found = try target.map { try directory.remoteSessions(target: $0) }
+            ?? directory.localSessions()
+        for session in found {
+            print("\(pad(session.id, 26)) \(pad(session.isRunning ? "running" : "stopped", 8)) \(session.serverSocketPath)")
         }
     }
 
@@ -330,7 +354,8 @@ enum CLI {
     static func pad(_ text: String, _ width: Int) -> String { text.padding(toLength: width, withPad: " ", startingAt: 0) }
     static func timestamp() -> String { ISO8601DateFormatter().string(from: Date()) }
     static func usage() {
-        print("usage: notchctl [--sock PATH] [--json] <list|watch|read|inspect|dry-run|capture|extract|resolve|reply|jump> …")
+        print("usage: notchctl [--sock PATH | --session NAME] [--json] <list|sessions|watch|read|inspect|dry-run|capture|extract|resolve|reply|jump> …")
+        print("  sessions [--remote TARGET]   list herdr sessions and their socket paths")
         print("  inspect <fixture-dir|detection-file> [--agent ID --visible FILE --pane ID --revision N]")
         print("  dry-run <pane> <option N|check N|uncheck N|type TEXT|text TEXT|option-text N TEXT|add-notes|clear-notes|previous|next|step N|submit|approve|deny|cancel> [--expected-fingerprint HEX]")
     }

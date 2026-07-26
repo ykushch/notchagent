@@ -15,10 +15,14 @@ struct JumpNotice: Sendable, Equatable {
 
 /// Observable view-model backing the notch UI (specs 08/09).
 ///
-/// Single source of truth for what the SwiftUI content shows. Owns the herdr
-/// `StateStore`, `Actions`, and pane-keyed `InteractionCoordinator`, hydrates
-/// from a snapshot on launch, consumes the live event stream, and auto-expands
-/// when a pane blocks without allowing one pane to overwrite another.
+/// Single source of truth for what the SwiftUI content shows. Owns a
+/// `SessionRegistry` — one `SessionRuntime` per herdr server — and turns what the
+/// runtimes report into presentation: sounds, auto-expand, and the selected card.
+/// Every decision that can move the notch lives here rather than in a runtime, so
+/// a background session finishing can never stomp the card the user is reading.
+///
+/// Panes are addressed by `AgentRef`, never by bare pane id: `w1:p1` exists on
+/// every session and every host.
 @Observable
 @MainActor
 final class NotchViewModel {
@@ -27,23 +31,43 @@ final class NotchViewModel {
     var presentation: NotchPresentation = .compact
     var isExpanded: Bool { presentation.isExpanded }
 
-    // MARK: Live state (from the store)
+    // MARK: Live state
 
-    let store = StateStore()
+    let registry = SessionRegistry()
 
-    /// Source of truth: selection, interactions, drafts, errors, revisions,
-    /// reads, and response phases are all pane-keyed in this coordinator.
-    private(set) var interactions: InteractionCoordinator
+    /// Local discovery is cheap; remote discovery opens an SSH command channel and
+    /// therefore runs much less often.
+    private static let localDiscoveryInterval: UInt64 = 10_000_000_000
+    private static let localRefreshesPerRemoteRefresh = 6
 
-    var selectedPaneID: String? { interactions.selectedPaneID }
-    var selectedInteractionState: PaneInteractionState? { interactions.selectedState }
+    @ObservationIgnored private var discoveryTask: Task<Void, Never>?
+    /// Set when the app was configured with an explicit socket, which pins the
+    /// notch to exactly that server instead of discovering sessions.
+    @ObservationIgnored private var pinnedSession: ResolvedSession?
+
+    /// Selection is derived from the runtimes rather than mirrored, so it cannot
+    /// drift from the coordinators that actually drive refresh priority.
+    var selected: AgentRef? {
+        for runtime in registry.runtimes {
+            if let paneID = runtime.interactions.selectedPaneID {
+                return AgentRef(sessionID: runtime.sessionID, paneID: paneID)
+            }
+        }
+        return nil
+    }
+
+    var selectedRuntime: SessionRuntime? { selected.flatMap { registry.runtime(for: $0) } }
+
+    var selectedInteractionState: PaneInteractionState? {
+        selectedRuntime?.interactions.selectedState
+    }
     var selectedInteraction: PendingInteraction? {
-        interactions.selectedState?.interaction
+        selectedInteractionState?.interaction
     }
     var selectedInteractionSizingIdentity: String? {
-        guard let selectedPaneID else { return nil }
+        guard let selected else { return nil }
         let fingerprint = selectedInteraction?.fingerprint.rawValue ?? "none"
-        return "\(selectedPaneID):\(fingerprint)"
+        return "\(selected.id):\(fingerprint)"
     }
 
     var attentionItems: [InteractionAttentionDisplayModel] {
@@ -51,72 +75,81 @@ final class NotchViewModel {
     }
 
     func attentionItems(at now: Date) -> [InteractionAttentionDisplayModel] {
-        let panes = store.panes.values.filter {
-            $0.agent != nil || store.derivedStatus(forPane: $0.paneID) != .unknown
-        }
-        let attentionRank = Dictionary(uniqueKeysWithValues:
-            interactions.attentionOrder.enumerated().map { ($0.element, $0.offset) })
-        return panes.map { pane in
-            let workspaceLabel = store.workspaces[pane.workspaceID]?.label
-            let spaceTitle = PaneDisplayIdentity.spaceTitle(
-                pane: pane, workspaceLabel: workspaceLabel)
-            let tab = store.tabs[pane.tabID]
-            let status = store.derivedStatus(forPane: pane.paneID)
-            let activeSince = status == .working
-                ? store.workingSince[pane.paneID]
-                : status == .blocked ? store.blockedSince[pane.paneID] : nil
-            return InteractionAttentionDisplayModel(
-                paneID: pane.paneID,
-                taskTitle: PaneDisplayIdentity.taskTitle(
-                    pane: pane, workspaceLabel: workspaceLabel),
-                agentName: pane.displayAgent ?? pane.agent ?? "agent",
-                modelName: PaneDisplayIdentity.modelBadge(pane: pane),
-                workspaceLabel: spaceTitle,
-                tabTitle: PaneDisplayIdentity.tabTitle(
-                    label: tab?.label, number: tab?.number),
-                status: status,
-                state: interactions.state(for: pane.paneID),
-                completionSummary: interactions.completionSummary(for: pane.paneID),
-                activeSince: activeSince, now: now,
-                isSelected: pane.paneID == selectedPaneID)
-        }.sorted { left, right in
-            let leftRank = attentionRank[left.paneID]
-            let rightRank = attentionRank[right.paneID]
-            if let leftRank, let rightRank { return leftRank < rightRank }
-            if leftRank != nil { return true }
-            if rightRank != nil { return false }
-            if left.status.precedence != right.status.precedence {
-                return left.status.precedence > right.status.precedence
+        let selected = selected
+        let showSessionBadges = registry.runtimes.count > 1
+        var rows: [(rank: Int?, model: InteractionAttentionDisplayModel)] = []
+        for runtime in registry.runtimes {
+            let store = runtime.store
+            let interactions = runtime.interactions
+            let attentionRank = Dictionary(uniqueKeysWithValues:
+                interactions.attentionOrder.enumerated().map { ($0.element, $0.offset) })
+            for pane in runtime.displayablePanes {
+                let workspaceLabel = store.workspaces[pane.workspaceID]?.label
+                let spaceTitle = PaneDisplayIdentity.spaceTitle(
+                    pane: pane, workspaceLabel: workspaceLabel)
+                let tab = store.tabs[pane.tabID]
+                let status = store.derivedStatus(forPane: pane.paneID)
+                let activeSince = status == .working
+                    ? store.workingSince[pane.paneID]
+                    : status == .blocked ? store.blockedSince[pane.paneID] : nil
+                let model = InteractionAttentionDisplayModel(
+                    paneID: pane.paneID,
+                    sessionID: runtime.sessionID,
+                    sessionLabel: showSessionBadges ? runtime.descriptor.label : nil,
+                    isRemote: runtime.descriptor.isRemote,
+                    taskTitle: PaneDisplayIdentity.taskTitle(
+                        pane: pane, workspaceLabel: workspaceLabel),
+                    agentName: pane.displayAgent ?? pane.agent ?? "agent",
+                    modelName: PaneDisplayIdentity.modelBadge(pane: pane),
+                    workspaceLabel: spaceTitle,
+                    tabTitle: PaneDisplayIdentity.tabTitle(
+                        label: tab?.label, number: tab?.number),
+                    status: status,
+                    state: interactions.state(for: pane.paneID),
+                    completionSummary: interactions.completionSummary(for: pane.paneID),
+                    activeSince: activeSince, now: now,
+                    isSelected: selected?.paneID == pane.paneID
+                        && selected?.sessionID == runtime.sessionID)
+                rows.append((attentionRank[pane.paneID], model))
             }
-            return left.paneID < right.paneID
         }
+        // Panes the coordinator has ranked float to the top in that order; the rest
+        // sort by urgency, then by ref so ordering stays stable across sessions.
+        return rows.sorted { left, right in
+            if let leftRank = left.rank, let rightRank = right.rank {
+                if leftRank != rightRank { return leftRank < rightRank }
+                return left.model.id < right.model.id
+            }
+            if left.rank != nil { return true }
+            if right.rank != nil { return false }
+            if left.model.status.precedence != right.model.status.precedence {
+                return left.model.status.precedence > right.model.status.precedence
+            }
+            return left.model.id < right.model.id
+        }.map(\.model)
     }
 
     func displaySnapshot(at now: Date) -> NotchDisplaySnapshot {
         let items = attentionItems(at: now)
         return NotchDisplaySnapshot(
             items: items,
-            selectedItem: selectedPaneID.flatMap { selectedPaneID in
-                items.first { $0.paneID == selectedPaneID }
-            })
+            selectedItem: selected.flatMap { ref in items.first { $0.ref == ref } })
     }
 
     /// Rollup status of the currently-selected pane, for the card header.
     var selectedStatus: RollupStatus? {
-        guard let id = selectedPaneID else { return nil }
-        return store.derivedStatus(forPane: id)
+        guard let selected, let runtime = registry.runtime(for: selected) else { return nil }
+        return runtime.store.derivedStatus(forPane: selected.paneID)
     }
 
-    /// Mode cycling is intentionally exposed only for agents whose terminal UI
-    /// documents Shift-Tab for this purpose. We do not infer the current mode.
     var selectedAgentSupportsModeCycling: Bool {
-        guard let paneID = selectedPaneID else { return false }
-        return AgentModeCycling.isSupported(agentID: store.panes[paneID]?.agent)
+        guard let selected, let runtime = registry.runtime(for: selected) else { return false }
+        return runtime.supportsModeCycling(paneID: selected.paneID)
     }
 
-    private(set) var agentModesByPane: [String: AgentMode] = [:]
     var selectedAgentMode: AgentMode? {
-        selectedPaneID.flatMap { agentModesByPane[$0] }
+        guard let selected, let runtime = registry.runtime(for: selected) else { return nil }
+        return runtime.agentModesByPane[selected.paneID]
     }
 
     var canCycleSelectedAgentMode: Bool {
@@ -126,24 +159,34 @@ final class NotchViewModel {
     /// Per-pane draft projection. Switching panes never overwrites another draft.
     var replyText: String {
         get {
-            guard let pane = selectedPaneID else { return "" }
-            return interactions.draftText(for: pane)
+            guard let selected, let runtime = registry.runtime(for: selected) else { return "" }
+            return runtime.interactions.draftText(for: selected.paneID)
         }
         set {
-            guard let pane = selectedPaneID else { return }
-            _ = interactions.setDraftText(newValue, paneID: pane)
+            guard let selected, let runtime = registry.runtime(for: selected) else { return }
+            _ = runtime.interactions.setDraftText(newValue, paneID: selected.paneID)
             markUserEngaged()
         }
     }
 
-    private var globalError: String?
     var lastError: String? {
-        get { interactions.selectedState?.error ?? globalError }
+        get {
+            if let state = selectedInteractionState, let error = state.error { return error }
+            if let runtime = selectedRuntime { return runtime.error }
+            // No selection: report the first session that is actually unhappy, so a
+            // single unreachable session doesn't stay silent. A failed SSH tunnel
+            // is reported ahead of a session error because it is the actionable
+            // cause — "herdr isn't running" would send the user looking in the
+            // wrong place entirely.
+            return registry.pendingTunnelMessages.first
+                ?? registry.runtimes.compactMap(\.error).first
+                ?? registry.discoveryError
+        }
         set {
-            if let pane = selectedPaneID {
-                interactions.setError(newValue, paneID: pane)
+            if let selected, let runtime = registry.runtime(for: selected) {
+                runtime.setError(newValue, paneID: selected.paneID)
             } else {
-                globalError = newValue
+                registry.runtimes.first?.error = newValue
             }
         }
     }
@@ -156,10 +199,16 @@ final class NotchViewModel {
     /// jump notice's "Attach command copied."
     private(set) var updateCommandCopied = false
 
-    /// Connection state for the robustness UX (spec 10d): drives a "herdr not
-    /// running" empty state vs. a live view.
-    enum Connection: Sendable, Equatable { case connecting, connected, unavailable }
-    var connection: Connection = .connecting
+    typealias Connection = SessionRuntime.Connection
+
+    /// The best state across sessions: connected if any session is live. One
+    /// unreachable named session must not blank out a working notch.
+    var connection: Connection {
+        let states = registry.runtimes.map(\.connection)
+        if states.contains(.connected) { return .connected }
+        if states.contains(.connecting) || states.isEmpty { return .connecting }
+        return .unavailable
+    }
 
     /// Optional sound engine + settings (injected by the app). The store is the
     /// source of truth; these are side-effects on state transitions.
@@ -175,323 +224,156 @@ final class NotchViewModel {
 
     // MARK: Derived summary for the collapsed pill
 
-    /// Worst status across all agents — drives the pill color.
-    var overallStatus: RollupStatus { store.overallStatus }
+    /// Worst status across all agents in all sessions — drives the pill color.
+    var overallStatus: RollupStatus {
+        registry.runtimes.map(\.store.overallStatus)
+            .max(by: { $0.precedence < $1.precedence }) ?? .unknown
+    }
 
     /// Count of agents needing attention (blocked) for the pill badge.
-    var attentionCount: Int { store.blockedPanes.count }
+    var attentionCount: Int {
+        registry.runtimes.reduce(0) { $0 + $1.blockedPaneCount }
+    }
 
     /// Total agent count (panes with a known agent) for the pill.
-    var agentCount: Int { store.panes.values.filter { $0.agent != nil }.count }
+    var agentCount: Int {
+        registry.runtimes.reduce(0) { $0 + $1.agentCount }
+    }
 
     var hasAttention: Bool { attentionCount > 0 || overallStatus == .blocked }
-    var hasWorkingPanes: Bool {
-        store.panes.keys.contains { store.derivedStatus(forPane: $0) == .working }
-    }
+    var hasWorkingPanes: Bool { registry.runtimes.contains { $0.hasWorkingPanes } }
 
     /// Project/session title for the selected blocked pane, otherwise the most
     /// urgent blocked pane. Nil preserves the compact count-only idle pill.
     var pillTaskTitle: String? {
         guard hasAttention else { return nil }
-        return AttentionRollupDisplay.pillTaskTitle(
-            items: attentionItems, selectedPaneID: selectedPaneID)
+        return AttentionRollupDisplay.pillTaskTitle(items: attentionItems, selected: selected)
     }
 
-    // MARK: Dependencies
+    var isActing: Bool { selectedRuntime?.isActing == true }
 
-    @ObservationIgnored private var client: HerdrClient
-    @ObservationIgnored private var actions: Actions
-    @ObservationIgnored private var completionProvider: ScreenCompletionSummaryProvider
-    @ObservationIgnored private var modeProvider: ScreenAgentModeProvider
-    @ObservationIgnored private var nativeRegistry: OpenCodePaneRegistry
-    @ObservationIgnored private var eventTask: Task<Void, Never>?
-    @ObservationIgnored private var pollTask: Task<Void, Never>?
-    var isActing: Bool { interactions.selectedState?.phase.isBusy == true }
+    // MARK: Init
 
-    init(client: HerdrClient = HerdrClient()) {
-        self.client = client
-        let actions = Actions(client: client)
-        let screenProvider = ScreenInteractionProvider(client: client)
-        let registry = OpenCodePaneRegistry()
-        let nativeClient = OpenCodeHTTPClient()
-        let nativeProvider = OpenCodeNativeInteractionProvider(
-            registry: registry, client: nativeClient)
-        let provider = RoutedInteractionProvider(
-            registry: registry, native: nativeProvider, fallback: screenProvider)
-        self.actions = actions
-        self.nativeRegistry = registry
-        self.completionProvider = ScreenCompletionSummaryProvider(client: client)
-        self.modeProvider = ScreenAgentModeProvider(client: client)
-        self.interactions = InteractionCoordinator(
-            reader: provider,
-            responder: RoutedInteractionResponder(
-                registry: registry,
-                native: OpenCodeNativeInteractionResponder(
-                    registry: registry, client: nativeClient),
-                fallback: InteractionResponder(
-                    provider: screenProvider, actions: actions)))
+    /// A resolved session pins the notch to one server. Passing nil lets the app
+    /// discover and track every running local session.
+    init(pinnedSession: ResolvedSession? = nil) {
+        self.pinnedSession = pinnedSession
     }
 
-    /// Re-point the client at a new socket (session switch, spec 10c) and restart
-    /// the event loop. `actions` is rebuilt lazily off the new client.
-    func reconnect(socketPath: String?) {
+    /// Re-point at a new socket (session switch, spec 10c) and restart the loops.
+    func reconnect(pinnedSession: ResolvedSession?) {
         stop()
-        client = HerdrClient(socketPath: socketPath)
-        actions = Actions(client: client)
-        let screenProvider = ScreenInteractionProvider(client: client)
-        let registry = OpenCodePaneRegistry()
-        let nativeClient = OpenCodeHTTPClient()
-        let nativeProvider = OpenCodeNativeInteractionProvider(
-            registry: registry, client: nativeClient)
-        let provider = RoutedInteractionProvider(
-            registry: registry, native: nativeProvider, fallback: screenProvider)
-        nativeRegistry = registry
-        completionProvider = ScreenCompletionSummaryProvider(client: client)
-        modeProvider = ScreenAgentModeProvider(client: client)
-        agentModesByPane = [:]
-        interactions = InteractionCoordinator(
-            reader: provider,
-            responder: RoutedInteractionResponder(
-                registry: registry,
-                native: OpenCodeNativeInteractionResponder(
-                    registry: registry, client: nativeClient),
-                fallback: InteractionResponder(
-                    provider: screenProvider, actions: actions)))
-        connection = .connecting
-        globalError = nil
+        self.pinnedSession = pinnedSession
+        registry.apply([])
         start()
     }
 
     // MARK: Lifecycle
 
-    /// Begin driving the UI from herdr.
-    ///
-    /// **Primary path: snapshot polling.** herdr's snapshot always carries correct
-    /// `agent_status`, but its `pane_agent_status_changed` events proved sparse/
-    /// absent on the live build (a pane can sit `blocked` and never emit one). So a
-    /// short-interval poll of `session.snapshot`, reconciled into the store, is the
-    /// reliable status driver — this is what makes the pill actually react.
-    ///
-    /// **Accelerator path: events.** We still consume the event stream so that when
-    /// events *do* fire, updates are instant, and so we notice new panes promptly.
-    /// Both paths funnel through the store, which dedupes and diffs, so they can't
-    /// double-count.
     func start() {
-        pollTask = Task { @MainActor in
-            while !Task.isCancelled {
-                await self.pollOnce()
-                let cadence = SnapshotPollingPolicy.nanoseconds(
-                    isExpanded: self.isExpanded,
-                    hasBlockedPanes: self.attentionCount > 0,
-                    hasWorkingPanes: self.hasWorkingPanes,
-                    isUnavailable: self.connection == .unavailable)
-                try? await Task.sleep(nanoseconds: cadence)
-            }
-        }
-        eventTask = Task { @MainActor in
-            while !Task.isCancelled {
-                // The event loop no longer owns hydration (the poll does); it just
-                // opens a stream over the current panes and reacts to what arrives.
-                let subs = self.store.currentSubscriptions()
-                let watched = Set(self.store.panes.keys)
-                let stream = self.client.events(subscriptions: { subs })
-                for await raw in stream {
-                    guard let event = EventEnvelope(raw) else { continue }
-                    self.handle(event)
-                    // A genuinely new pane → break so we resubscribe over the new
-                    // set. Confirm against a fresh snapshot (herdr replays
-                    // pane_created for closed panes, which would otherwise thrash).
-                    if (event.event == "pane_created" || event.event == "pane_agent_detected"),
-                       let pane = event.paneID, !watched.contains(pane),
-                       await self.liveHasUnwatchedPane(watched: watched) {
-                        break
-                    }
-                }
-                if Task.isCancelled { break }
-                try? await Task.sleep(nanoseconds: 500_000_000)  // brief pause before resubscribe
-            }
-        }
-    }
-
-    /// One poll: fetch a snapshot, reconcile it, and fire side-effects for any
-    /// pane that newly blocked (sound + auto-expand) — mirroring event handling.
-    private func pollOnce() async {
-        do {
-            let result = try await client.request("session.snapshot")
-            let snapValue = result["snapshot"] ?? result
-            let snapshot = try snapValue.decode(Snapshot.self)
-            if connection != .connected { connection = .connected }
-            if globalError != nil { globalError = nil }
-            let selectedBefore = selectedPaneID
-            let transitions = store.reconcileTransitions(snapshot)
-            agentModesByPane = agentModesByPane.filter { store.panes[$0.key] != nil }
-            _ = await reconcileInteractions(
-                newlyBlocked: transitions.newlyBlockedPaneIDs)
-            await refreshSelectedAgentMode()
-            await captureCompletionSummaries(
-                paneIDs: transitions.newlyFinishedPaneIDs)
-            for _ in transitions.newlyBlockedPaneIDs {
-                soundEngine?.play(.blocked)
-            }
-            for _ in transitions.newlyFinishedPaneIDs {
-                soundEngine?.play(.done)
-            }
-            if !transitions.newlyBlockedPaneIDs.isEmpty,
-               let target = interactions.attentionOrder.first {
-                await surfaceBlockedPane(target)
-            }
-            if !transitions.newlyFinishedPaneIDs.isEmpty,
-               settings?.autoExpandOnDone ?? false {
-                showOverview()
-            }
-            // If an AUTO-surfaced blocked pane resolved (no longer blocked), clear
-            // the card. But leave a MANUALLY-opened pane alone — the user opened it
-            // deliberately (e.g. to read/jump an idle agent) and it should stay
-            // until they close it.
-            synchronizePresentationAfterInteractionReconcile(
-                selectedBefore: selectedBefore)
-            handleSelectedPaneResolutionIfNeeded()
-        } catch {
-            if connection != .unavailable { connection = .unavailable }
-            let message = "Couldn't reach herdr — is it running?"
-            if lastError != message { lastError = message }
-        }
-    }
-
-    /// Apply one event to the store and fire the UI side-effects (sounds,
-    /// auto-expand, card clearing).
-    private func handle(_ event: EventEnvelope) {
-        // The client emits this sentinel if herdr rejected the subscribe batch —
-        // surface it instead of silently looping (it would otherwise never deliver
-        // events). Marks the connection unavailable so the UI shows the error.
-        if event.event == "__subscribe_error" {
-            connection = .unavailable
-            lastError = "herdr rejected the event subscription: \(event.data["message"]?.stringValue ?? "invalid_request")"
+        registry.start(host: self)
+        if let pinnedSession {
+            registry.apply([pinnedSession])
             return
         }
-        let transitions = store.applyTransitions(event)
-        let didBlock = !transitions.newlyBlockedPaneIDs.isEmpty
-        if didBlock, event.paneID != nil {
-            soundEngine?.play(.blocked)
-        }
-        Task { @MainActor in
-            let selectedBefore = self.selectedPaneID
-            _ = await self.reconcileInteractions(
-                newlyBlocked: transitions.newlyBlockedPaneIDs,
-                countsTowardFallbackCadence: false)
-            await self.captureCompletionSummaries(
-                paneIDs: transitions.newlyFinishedPaneIDs)
-            self.synchronizePresentationAfterInteractionReconcile(
-                selectedBefore: selectedBefore)
-            self.handleSelectedPaneResolutionIfNeeded()
-            if didBlock,
-               let target = self.interactions.attentionOrder.first {
-                await self.surfaceBlockedPane(target)
+        startDiscoveryLoop()
+    }
+
+    /// Apply Settings changes promptly instead of waiting for the slower remote
+    /// discovery cadence. Cancellation guards in the registry prevent an older
+    /// lookup from reconciling after this new configuration.
+    func remoteHostsDidChange() {
+        guard pinnedSession == nil else { return }
+        discoveryTask?.cancel()
+        startDiscoveryLoop()
+    }
+
+    private func startDiscoveryLoop() {
+        discoveryTask = Task { @MainActor in
+            while !Task.isCancelled {
+                await registry.refresh(remoteHosts: settings?.remoteHosts ?? [])
+                for _ in 1..<Self.localRefreshesPerRemoteRefresh {
+                    try? await Task.sleep(nanoseconds: Self.localDiscoveryInterval)
+                    guard !Task.isCancelled else { return }
+                    await registry.refreshLocalSessions()
+                }
+                try? await Task.sleep(nanoseconds: Self.localDiscoveryInterval)
             }
         }
-        // A pane that just became finished-unseen → play the done sound.
-        for _ in transitions.newlyFinishedPaneIDs {
-            soundEngine?.play(.done)
-        }
-        if !transitions.newlyFinishedPaneIDs.isEmpty,
-           settings?.autoExpandOnDone ?? false { showOverview() }
-        // Coordinator reconciliation above removes resolved/exited interaction
-        // state without disturbing any other pane's response or refresh.
     }
 
     func stop() {
-        pollTask?.cancel()
-        pollTask = nil
-        eventTask?.cancel()
-        eventTask = nil
+        discoveryTask?.cancel()
+        discoveryTask = nil
+        registry.stop()
     }
 
-    /// Whether a fresh snapshot contains a pane not in `watched` — used to confirm
-    /// a genuine new pane before resubscribing (filters out herdr's stale
-    /// `pane_created` replays of closed panes).
-    private func liveHasUnwatchedPane(watched: Set<String>) async -> Bool {
-        guard let result = try? await client.request("session.snapshot") else { return false }
-        let snapValue = result["snapshot"] ?? result
-        guard let snapshot = try? snapValue.decode(Snapshot.self) else { return false }
-        return !Set(snapshot.uniquePanes.map(\.paneID)).subtracting(watched).isEmpty
-    }
+    // MARK: Selection
 
     /// Read + classify a blocked pane and surface it in an auto-expanded card.
-    func surfaceBlockedPane(_ paneID: String) async {
-        await interactions.select(paneID: paneID)
+    func surfaceBlockedPane(_ ref: AgentRef) async {
+        await select(ref)
         presentation = .focused(NotchFocusContext(
             origin: .automatic, hasUserEngaged: false))
-        await refreshAgentMode(paneID: paneID)
+        registry.refreshEventSubscriptionPolicies()
     }
 
-    private func reconcileInteractions(
-        newlyBlocked: [String],
-        countsTowardFallbackCadence: Bool = true
-    ) async
-        -> InteractionReconcileResult {
-        let paneValues = Array(store.panes.values)
-        await nativeRegistry.replace(panes: paneValues)
-        return await interactions.reconcile(
-            panes: paneValues.map { pane in
-                InteractionPaneSnapshot(
-                    paneID: pane.paneID, agentID: pane.agent,
-                    revision: pane.revision,
-                    isBlocked: store.derivedStatus(forPane: pane.paneID) == .blocked,
-                    isWorking: store.derivedStatus(forPane: pane.paneID) == .working)
-            },
-            newlyBlockedPaneIDs: newlyBlocked,
-            preserveSelectedResolvedPane: presentation.preservesResolvedSelection,
-            countsTowardFallbackCadence: countsTowardFallbackCadence)
-    }
-
-    /// One bounded tail read per newly-finished transition. Failed or empty
-    /// extraction is intentionally not retried on every poll.
-    private func captureCompletionSummaries(paneIDs: [String]) async {
-        for paneID in paneIDs where store.panes[paneID] != nil {
-            guard let summary = try? await completionProvider.completionSummary(
-                paneID: paneID) else { continue }
-            interactions.cacheCompletionSummary(summary, paneID: paneID)
+    /// Selecting anywhere clears the selection everywhere else — exactly one pane
+    /// is on the card, and the other coordinators must drop their refresh priority.
+    private func select(_ ref: AgentRef) async {
+        for runtime in registry.runtimes where runtime.sessionID != ref.sessionID {
+            runtime.clearSelection()
         }
+        await registry.runtime(for: ref)?.select(paneID: ref.paneID)
+        registry.refreshEventSubscriptionPolicies()
     }
 
-    func selectPane(_ paneID: String) {
-        if selectedPaneID == paneID, presentation.isFocused {
+    func selectPane(_ ref: AgentRef) {
+        if selected == ref, presentation.isFocused {
             showOverview()
             return
         }
         Task { @MainActor in
-            await interactions.select(paneID: paneID)
+            await select(ref)
             presentation = .focused(NotchFocusContext(
                 origin: .manual, hasUserEngaged: true))
-            await refreshAgentMode(paneID: paneID)
+            registry.refreshEventSubscriptionPolicies()
         }
     }
 
     func selectAdjacentPane(_ delta: Int) {
         let items = attentionItems
         guard !items.isEmpty else { return }
-        let current = selectedPaneID.flatMap { id in
-            items.firstIndex(where: { $0.paneID == id })
+        let current = selected.flatMap { ref in
+            items.firstIndex(where: { $0.ref == ref })
         } ?? (delta > 0 ? -1 : 0)
         let next = (current + delta + items.count) % items.count
-        let paneID = items[next].paneID
+        let ref = items[next].ref
         Task { @MainActor in
-            await interactions.select(paneID: paneID)
+            await select(ref)
             presentation = .focused(NotchFocusContext(
                 origin: .manual, hasUserEngaged: true))
-            await refreshAgentMode(paneID: paneID)
+            registry.refreshEventSubscriptionPolicies()
         }
     }
 
     func toggle() { isExpanded ? collapse() : showOverview() }
     func expand() { showOverview() }
     func showOverview() {
-        interactions.clearSelection()
+        clearAllSelections()
         presentation = .overview
     }
-    func collapse() { presentation = .compact }
+    func collapse() {
+        presentation = .compact
+        registry.refreshEventSubscriptionPolicies()
+    }
     func clearSelection() {
         showOverview()
+    }
+
+    private func clearAllSelections() {
+        for runtime in registry.runtimes { runtime.clearSelection() }
+        registry.refreshEventSubscriptionPolicies()
     }
 
     private func markUserEngaged() {
@@ -499,22 +381,24 @@ final class NotchViewModel {
     }
 
     private func synchronizePresentationAfterInteractionReconcile(
-        selectedBefore: String?
+        runtime: SessionRuntime, selectedBefore: String?
     ) {
-        guard let selectedBefore, selectedPaneID == nil else { return }
-        guard store.panes[selectedBefore] == nil || presentation.isFocused else { return }
+        guard let selectedBefore, selected == nil else { return }
+        guard runtime.store.panes[selectedBefore] == nil || presentation.isFocused else { return }
         presentation = presentation.fallbackAfterFocusedPaneEnds
     }
 
     private func handleSelectedPaneResolutionIfNeeded() {
-        guard let selectedPaneID,
-              store.derivedStatus(forPane: selectedPaneID) != .blocked,
+        guard let selected, let runtime = registry.runtime(for: selected),
+              runtime.store.derivedStatus(forPane: selected.paneID) != .blocked,
               case .focused(let context) = presentation,
               context.origin == .automatic
         else { return }
-        interactions.clearSelection()
+        runtime.clearSelection()
         presentation = context.hasUserEngaged ? .overview : .compact
     }
+
+    // MARK: Actions
 
     func approveSelected() {
         respondToSelectedInteraction(.approve)
@@ -529,7 +413,7 @@ final class NotchViewModel {
                 ? .selectChoice(index) : .previewChoice(index))
     }
     func replySelected() {
-        guard let pane = selectedPaneID else { return }
+        guard let selected else { return }
         let text = replyText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         if let interaction = selectedInteraction,
@@ -541,40 +425,31 @@ final class NotchViewModel {
             respondToSelectedInteraction(.submitText(text))
             return
         }
-        let actions = actions
-        runManualAction(paneID: pane) {
-            _ = try await actions.reply(pane: pane, text: text)
-        }
+        runManualAction { await $0.reply(paneID: selected.paneID, text: text) }
     }
     func confirmSelectedDraftReuse() {
-        guard let pane = selectedPaneID else { return }
+        guard let selected, let runtime = registry.runtime(for: selected) else { return }
         markUserEngaged()
-        _ = interactions.confirmDraftReuse(paneID: pane)
+        _ = runtime.interactions.confirmDraftReuse(paneID: selected.paneID)
     }
     func discardSelectedDraft() {
-        guard let pane = selectedPaneID else { return }
+        guard let selected, let runtime = registry.runtime(for: selected) else { return }
         markUserEngaged()
-        interactions.discardDraft(paneID: pane)
+        runtime.interactions.discardDraft(paneID: selected.paneID)
     }
     /// Explicit manual typing for partially supported normalized interactions.
     /// It does not press Enter; the user remains in control of submission.
     func typeTextWithoutSubmitSelected() {
-        guard let pane = selectedPaneID else { return }
+        guard let selected else { return }
         let text = replyText
         guard !text.isEmpty else { return }
-        let actions = actions
-        runManualAction(paneID: pane) {
-            _ = try await actions.reply(pane: pane, text: text, submit: false)
-        }
+        runManualAction { await $0.reply(paneID: selected.paneID, text: text, submit: false) }
     }
     func sendManualTextSelected() {
-        guard let pane = selectedPaneID else { return }
+        guard let selected else { return }
         let text = replyText
         guard !text.isEmpty else { return }
-        let actions = actions
-        runManualAction(paneID: pane) {
-            _ = try await actions.reply(pane: pane, text: text)
-        }
+        runManualAction { await $0.reply(paneID: selected.paneID, text: text) }
     }
     func submitTextOption(index: Int, text: String) {
         guard !text.isEmpty else { return }
@@ -589,45 +464,56 @@ final class NotchViewModel {
     }
     func sendArrowToSelected(_ key: String) { sendRawKeysSelected([key]) }
     func cycleSelectedAgentMode() {
-        guard canCycleSelectedAgentMode, let pane = selectedPaneID else { return }
-        let actions = actions
+        guard canCycleSelectedAgentMode, let selected,
+              let runtime = registry.runtime(for: selected) else { return }
         markUserEngaged()
         Task { @MainActor in
-            _ = await interactions.performManualAction(paneID: pane) {
-                _ = try await actions.cycleAgentMode(pane: pane)
-            }
-            try? await Task.sleep(nanoseconds: 160_000_000)
-            await refreshAgentMode(paneID: pane)
+            await runtime.cycleAgentMode(paneID: selected.paneID)
         }
     }
     func sendRawKeysSelected(_ keys: [String]) {
-        guard let pane = selectedPaneID else { return }
-        sendRawKeys(pane: pane, keys: keys)
+        guard let selected else { return }
+        runManualAction { await $0.sendRawKeys(paneID: selected.paneID, keys: keys) }
     }
-    private func sendRawKeys(pane: String, keys: [String]) {
-        let actions = actions
-        runManualAction(paneID: pane) {
-            _ = try await actions.sendRawKeys(pane: pane, keys: keys)
+
+    /// The only entry point for structured UI actions. The responder re-reads
+    /// and validates stable identity before it can execute any operation.
+    func respondToSelectedInteraction(_ intent: InteractionResponseIntent) {
+        guard let selected, let runtime = registry.runtime(for: selected) else { return }
+        markUserEngaged()
+        Task { @MainActor in
+            await runtime.respond(paneID: selected.paneID, intent: intent)
         }
     }
-    func jumpSelected() { if let pane = selectedPaneID { jump(pane) } }
-    func jump(_ pane: String) {
-        if pane == selectedPaneID { markUserEngaged() }
-        let info = store.panes[pane]
+
+    /// Routes a manual action to the runtime that owns the current selection —
+    /// never to a runtime that merely has a pane with the same id.
+    private func runManualAction(
+        _ body: @escaping @MainActor (SessionRuntime) async -> Void
+    ) {
+        guard let selected, let runtime = registry.runtime(for: selected) else { return }
+        markUserEngaged()
+        Task { @MainActor in await body(runtime) }
+    }
+
+    // MARK: Jump
+
+    func jumpSelected() { if let selected { jump(selected) } }
+    func jump(_ ref: AgentRef) {
+        guard let runtime = registry.runtime(for: ref) else { return }
+        if ref == selected { markUserEngaged() }
+        let terminalID = runtime.store.panes[ref.paneID]?.terminalID
         let presenter = TerminalActivator(
             selection: settings?.terminalSelection ?? .automatic())
         Task { @MainActor in
             do {
-                let result = try await actions.jump(
-                    pane: pane,
-                    workspaceID: info?.workspaceID,
-                    tabID: info?.tabID,
-                    presenter: presenter)
-                handleJumpResult(result, terminalID: info?.terminalID)
+                let result = try await runtime.jump(paneID: ref.paneID, presenter: presenter)
+                handleJumpResult(
+                    result, terminalID: terminalID, descriptor: runtime.descriptor)
             }
             catch {
                 let message = "Couldn't jump to this agent: \(String(describing: error))"
-                interactions.setError(message, paneID: pane)
+                runtime.setError(message, paneID: ref.paneID)
                 jumpNotice = JumpNotice(text: message, attachCommand: nil)
             }
         }
@@ -642,6 +528,41 @@ final class NotchViewModel {
 
     func dismissJumpNotice() {
         jumpNotice = nil
+    }
+
+    private func handleJumpResult(
+        _ result: ActionResult, terminalID: String?, descriptor: SessionDescriptor
+    ) {
+        switch result {
+        case .sent:
+            break
+        case .jumped(.presented):
+            jumpNotice = nil
+        case .jumped(.unavailable(let failure)):
+            jumpNotice = JumpNotice(text: jumpFailureMessage(failure), attachCommand: nil)
+        case .needsAttach:
+            // The focus reached the server — for a remote session that means the
+            // agent is now focused on the far host, and what the user needs is the
+            // command that opens it here.
+            jumpNotice = JumpNotice(
+                text: descriptor.isRemote
+                    ? "Focused on \(descriptor.label), but no terminal here is attached to it."
+                    : "No Herdr terminal is attached. Attach a terminal to open this agent.",
+                attachCommand: descriptor.isRemote
+                    ? descriptor.attachCommand
+                    : terminalID.map { "herdr terminal attach \($0)" })
+        }
+    }
+
+    private func jumpFailureMessage(_ failure: TerminalPresentationFailure) -> String {
+        switch failure {
+        case .noSupportedTerminalRunning:
+            "Agent focused in Herdr, but no supported terminal is running. Choose a terminal in Settings."
+        case .ambiguous(let appNames):
+            "Agent focused in Herdr, but multiple terminals are running (\(appNames.joined(separator: ", "))). Choose one in Settings."
+        case .applicationUnavailable(let appName):
+            "Agent focused in Herdr, but \(appName) could not be opened. Check the terminal setting."
+        }
     }
 
     // MARK: Updates
@@ -664,66 +585,66 @@ final class NotchViewModel {
         updateChecker?.skipPendingUpdate()
         updateCommandCopied = false
     }
+}
 
-    private func handleJumpResult(_ result: ActionResult, terminalID: String?) {
-        switch result {
-        case .sent:
-            break
-        case .jumped(.presented):
-            jumpNotice = nil
-        case .jumped(.unavailable(let failure)):
-            jumpNotice = JumpNotice(text: jumpFailureMessage(failure), attachCommand: nil)
-        case .needsAttach:
-            let command = terminalID.map { "herdr terminal attach \($0)" }
-            jumpNotice = JumpNotice(
-                text: "No Herdr terminal is attached. Attach a terminal to open this agent.",
-                attachCommand: command)
+// MARK: - SessionRuntimeHost
+
+extension NotchViewModel: SessionRuntimeHost {
+    var isNotchExpanded: Bool { isExpanded }
+    var preservesResolvedSelection: Bool { presentation.preservesResolvedSelection }
+
+    /// Every row is visible in overview, while focused detail shows only its
+    /// selected session. A single session preserves the original fast cadence.
+    func isVisibleSession(_ runtime: SessionRuntime) -> Bool {
+        if registry.runtimes.count <= 1 { return true }
+        switch presentation {
+        case .compact:
+            return false
+        case .overview:
+            return true
+        case .focused:
+            return selected?.sessionID == runtime.sessionID
         }
     }
 
-    private func jumpFailureMessage(_ failure: TerminalPresentationFailure) -> String {
-        switch failure {
-        case .noSupportedTerminalRunning:
-            "Agent focused in Herdr, but no supported terminal is running. Choose a terminal in Settings."
-        case .ambiguous(let appNames):
-            "Agent focused in Herdr, but multiple terminals are running (\(appNames.joined(separator: ", "))). Choose one in Settings."
-        case .applicationUnavailable(let appName):
-            "Agent focused in Herdr, but \(appName) could not be opened. Check the terminal setting."
+    /// Per-pane status subscriptions are much more expensive than snapshots, so
+    /// only focused detail earns them in multi-session mode.
+    func usesPerPaneStatusSubscriptions(_ runtime: SessionRuntime) -> Bool {
+        if registry.runtimes.count <= 1 { return true }
+        return presentation.isFocused && selected?.sessionID == runtime.sessionID
+    }
+
+    /// Every presentation side-effect for a reconciled session lands here, so the
+    /// runtimes stay free of UI policy — and so a background session cannot move
+    /// the notch out from under the session the user is looking at.
+    func sessionRuntime(
+        _ runtime: SessionRuntime,
+        didObserve transitions: SessionRuntime.Transitions
+    ) async {
+        for _ in transitions.newlyBlockedPaneIDs {
+            soundEngine?.play(.blocked)
         }
-    }
-
-    /// Manual/raw terminal actions deliberately remain available for fallback
-    /// screens. Structured controls use `respondToSelectedInteraction` instead.
-    private func runManualAction(
-        paneID: String,
-        _ body: @escaping @Sendable () async throws -> Void) {
-        markUserEngaged()
-        Task { @MainActor in
-            _ = await interactions.performManualAction(
-                paneID: paneID, operation: body)
+        for _ in transitions.newlyFinishedPaneIDs {
+            soundEngine?.play(.done)
         }
-    }
-
-    private func refreshSelectedAgentMode() async {
-        guard let paneID = selectedPaneID else { return }
-        await refreshAgentMode(paneID: paneID)
-    }
-
-    private func refreshAgentMode(paneID: String) async {
-        guard let pane = store.panes[paneID],
-              AgentModeCycling.isSupported(agentID: pane.agent),
-              let mode = try? await modeProvider.mode(
-                paneID: paneID, agentID: pane.agent) else { return }
-        agentModesByPane[paneID] = mode
-    }
-
-    /// The only entry point for structured UI actions. The responder re-reads
-    /// and validates stable identity before it can execute any operation.
-    func respondToSelectedInteraction(_ intent: InteractionResponseIntent) {
-        guard let pane = selectedPaneID else { return }
-        markUserEngaged()
-        Task { @MainActor in
-            _ = await interactions.respond(paneID: pane, intent: intent)
+        if presentation.allowsAutomaticFocus,
+           !transitions.newlyBlockedPaneIDs.isEmpty,
+           let target = runtime.interactions.attentionOrder.first {
+            await surfaceBlockedPane(
+                AgentRef(sessionID: runtime.sessionID, paneID: target))
         }
+        if !transitions.newlyFinishedPaneIDs.isEmpty,
+           settings?.autoExpandOnDone ?? false,
+           presentation.allowsAutomaticOverview {
+            showOverview()
+        }
+        // If an AUTO-surfaced blocked pane resolved (no longer blocked), clear the
+        // card. But leave a MANUALLY-opened pane alone — the user opened it
+        // deliberately (e.g. to read/jump an idle agent) and it should stay until
+        // they close it.
+        synchronizePresentationAfterInteractionReconcile(
+            runtime: runtime, selectedBefore: transitions.selectedPaneIDBefore)
+        handleSelectedPaneResolutionIfNeeded()
+        registry.refreshEventSubscriptionPolicies()
     }
 }

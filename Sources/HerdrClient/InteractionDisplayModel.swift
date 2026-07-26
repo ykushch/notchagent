@@ -125,7 +125,12 @@ public struct InteractionDisplayModel: Sendable, Equatable {
 /// deliberately UI-framework-free so ordering, state language, summaries, and
 /// accessibility can be fixture tested.
 public struct InteractionAttentionDisplayModel: Identifiable, Sendable, Equatable {
-    public let paneID: String
+    public let ref: AgentRef
+    /// Shown as a badge so two agents from different sessions are visibly
+    /// different rows. Nil for the single default local session, where a badge
+    /// would be noise.
+    public let sessionLabel: String?
+    public let isRemote: Bool
     public let taskTitle: String
     public let agentName: String
     public let modelName: String?
@@ -138,21 +143,32 @@ public struct InteractionAttentionDisplayModel: Identifiable, Sendable, Equatabl
     public let freshnessText: String?
     public let isSelected: Bool
 
-    public var id: String { paneID }
+    public var paneID: String { ref.paneID }
+    public var sessionID: String { ref.sessionID }
+
+    /// Identity for `ForEach`. It **must** be the session-scoped ref: every herdr
+    /// server names its first pane `w1:p1`, so keying on `paneID` alone collapses
+    /// unrelated agents from different sessions into one row.
+    public var id: String { ref.id }
     public var title: String { workspaceLabel }
     public var accessibilityLabel: String {
-        [agentName, "in \(workspaceLabel)", tabTitle, modelName, "pane \(paneID)",
+        [agentName, "in \(workspaceLabel)", tabTitle, modelName,
+         sessionLabel.map { "session \($0)" }, "pane \(paneID)",
          stateText, summary, elapsedText, freshnessText]
             .compactMap { $0 }.joined(separator: ", ")
     }
 
-    public init(paneID: String, taskTitle: String, agentName: String,
+    public init(paneID: String, sessionID: String = SessionDescriptor.localDefaultID,
+                sessionLabel: String? = nil, isRemote: Bool = false,
+                taskTitle: String, agentName: String,
                 modelName: String? = nil, workspaceLabel: String,
                 tabTitle: String = "Tab", status: RollupStatus,
                 state: PaneInteractionState?, completionSummary: String? = nil,
                 activeSince: Date? = nil, now: Date = Date(),
                 isSelected: Bool) {
-        self.paneID = paneID
+        self.ref = AgentRef(sessionID: sessionID, paneID: paneID)
+        self.sessionLabel = sessionLabel
+        self.isRemote = isRemote
         self.taskTitle = taskTitle
         self.agentName = agentName
         self.modelName = modelName
@@ -277,13 +293,13 @@ public enum PaneDisplayIdentity {
 
 public enum AttentionRollupDisplay {
     public static func pillTaskTitle(
-        items: [InteractionAttentionDisplayModel], selectedPaneID: String?
+        items: [InteractionAttentionDisplayModel], selected: AgentRef?
     ) -> String? {
-        if let selectedPaneID,
-           let selected = items.first(where: {
-               $0.paneID == selectedPaneID && $0.status == .blocked
+        if let selected,
+           let row = items.first(where: {
+               $0.ref == selected && $0.status == .blocked
            }) {
-            return selected.title
+            return row.title
         }
         return items.first(where: { $0.status == .blocked })?.title
     }

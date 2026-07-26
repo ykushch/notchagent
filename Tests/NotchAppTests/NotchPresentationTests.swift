@@ -41,4 +41,14 @@ struct NotchPresentationTests {
         #expect(!NotchPresentation.overview.isFocused)
         #expect(!NotchPresentation.compact.isExpanded)
     }
+
+    @Test("automatic attention never replaces overview or user-owned detail")
+    func automaticAttentionRespectsUserContext() {
+        #expect(NotchPresentation.compact.allowsAutomaticFocus)
+        #expect(!NotchPresentation.overview.allowsAutomaticFocus)
+        #expect(!NotchPresentation.focused(.init(
+            origin: .automatic, hasUserEngaged: false)).allowsAutomaticFocus)
+        #expect(!NotchPresentation.focused(.init(
+            origin: .manual, hasUserEngaged: true)).allowsAutomaticOverview)
+    }
 }
