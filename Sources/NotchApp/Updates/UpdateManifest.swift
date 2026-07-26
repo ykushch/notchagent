@@ -1,7 +1,7 @@
 import Foundation
 
 /// The `appcast.json` asset published by the release workflow and fetched from
-/// `https://github.com/ykushch/agsig/releases/latest/download/appcast.json`.
+/// `https://github.com/ykushch/notchagent/releases/latest/download/appcast.json`.
 ///
 /// Decoding is tolerant of unknown fields (per the project convention) but
 /// strict about the fields it does use: a manifest that fails validation is

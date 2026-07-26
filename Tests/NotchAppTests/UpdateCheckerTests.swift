@@ -38,9 +38,9 @@ struct UpdateCheckerTests {
           "version": "\(version)",
           "publishedAt": "2026-07-24T12:00:00Z",
           "minimumSystemVersion": "\(minimum)",
-          "downloadURL": "https://github.com/ykushch/agsig/releases/download/v\(version)/NotchApp-\(version).zip",
+          "downloadURL": "https://github.com/ykushch/notchagent/releases/download/v\(version)/NotchApp-\(version).zip",
           "sha256": "\(String(repeating: "a", count: 64))",
-          "releaseNotesURL": "https://github.com/ykushch/agsig/releases/tag/v\(version)"
+          "releaseNotesURL": "https://github.com/ykushch/notchagent/releases/tag/v\(version)"
         }
         """.utf8)
     }

@@ -8,8 +8,8 @@ struct UpdateManifestTests {
     static func json(
         version: String = "1.3.0",
         minimum: String? = "14.0",
-        download: String = "https://github.com/ykushch/agsig/releases/download/v1.3.0/NotchApp-1.3.0.zip",
-        notes: String = "https://github.com/ykushch/agsig/releases/tag/v1.3.0",
+        download: String = "https://github.com/ykushch/notchagent/releases/download/v1.3.0/NotchApp-1.3.0.zip",
+        notes: String = "https://github.com/ykushch/notchagent/releases/tag/v1.3.0",
         sha256: String = String(repeating: "a", count: 64),
         extra: String = ""
     ) -> Data {
@@ -53,9 +53,9 @@ struct UpdateManifestTests {
     func fractionalTimestamp() throws {
         let data = Data("""
         {"version":"1.3.0","publishedAt":"2026-07-24T12:00:00.500Z",
-         "downloadURL":"https://github.com/ykushch/agsig/releases/download/v1.3.0/NotchApp-1.3.0.zip",
+         "downloadURL":"https://github.com/ykushch/notchagent/releases/download/v1.3.0/NotchApp-1.3.0.zip",
          "sha256":"\(String(repeating: "b", count: 64))",
-         "releaseNotesURL":"https://github.com/ykushch/agsig/releases/tag/v1.3.0"}
+         "releaseNotesURL":"https://github.com/ykushch/notchagent/releases/tag/v1.3.0"}
         """.utf8)
         #expect(try Self.decode(data).publishedAt != nil)
     }
@@ -63,7 +63,7 @@ struct UpdateManifestTests {
     @Test(
         "URLs off the GitHub allowlist are rejected",
         arguments: [
-            "http://github.com/ykushch/agsig/releases/download/v1.3.0/NotchApp-1.3.0.zip",
+            "http://github.com/ykushch/notchagent/releases/download/v1.3.0/NotchApp-1.3.0.zip",
             "https://evil.example.com/NotchApp-1.3.0.zip",
             "https://github.com.evil.example.com/NotchApp-1.3.0.zip",
             "https://user:pass@github.com/NotchApp-1.3.0.zip",

@@ -114,7 +114,7 @@ publishes a GitHub Release with generated notes and an `appcast.json` manifest,
 and updates the Homebrew cask.
 
 `appcast.json` is what running copies poll, through the stable
-`https://github.com/ykushch/agsig/releases/latest/download/appcast.json`
+`https://github.com/ykushch/notchagent/releases/latest/download/appcast.json`
 redirect. Its schema is defined by
 [`Sources/NotchApp/Updates/UpdateManifest.swift`](Sources/NotchApp/Updates/UpdateManifest.swift);
 the app rejects any manifest whose URLs are not HTTPS on a GitHub host.

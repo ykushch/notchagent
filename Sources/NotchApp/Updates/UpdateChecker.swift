@@ -21,7 +21,7 @@ final class UpdateChecker {
     typealias Fetch = @Sendable (URL) async throws -> Data
 
     static let defaultFeedURL = URL(
-        string: "https://github.com/ykushch/agsig/releases/latest/download/appcast.json")!
+        string: "https://github.com/ykushch/notchagent/releases/latest/download/appcast.json")!
     static let feedURLEnvironmentKey = "NOTCHAGENT_APPCAST_URL"
     static let checkInterval: Duration = .seconds(24 * 60 * 60)
     static let launchDelay: Duration = .seconds(10)

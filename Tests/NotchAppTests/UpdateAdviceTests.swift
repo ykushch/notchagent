@@ -6,9 +6,9 @@ import Testing
 struct UpdateAdviceTests {
     static let manifest = UpdateManifest(
         version: AppVersion("1.3.0")!,
-        downloadURL: URL(string: "https://github.com/ykushch/agsig/releases/download/v1.3.0/NotchApp-1.3.0.zip")!,
+        downloadURL: URL(string: "https://github.com/ykushch/notchagent/releases/download/v1.3.0/NotchApp-1.3.0.zip")!,
         sha256: String(repeating: "a", count: 64),
-        releaseNotesURL: URL(string: "https://github.com/ykushch/agsig/releases/tag/v1.3.0")!)
+        releaseNotesURL: URL(string: "https://github.com/ykushch/notchagent/releases/tag/v1.3.0")!)
 
     @Test("Homebrew installs are told to upgrade the cask, not to download")
     func homebrewGuidance() {
