@@ -36,7 +36,7 @@ an accelerator. The UI stays thin and every response remains explicitly user-dri
 
 ### See every agent at a glance
 
-![NotchAgent overview showing one blocked Claude session and one idle Claude session](Docs/img/03-agents-summary-view.png)
+![NotchAgent expanded overview showing two idle Claude agents across the local default session and a remote dev session](Docs/img/03-agents-summary-view.png)
 
 ### Configure the experience
 
