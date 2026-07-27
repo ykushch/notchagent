@@ -25,18 +25,33 @@ struct SettingsView: View {
                 availableSessions: discoveredSessions ?? availableSessions,
                 newRemoteTarget: $newRemoteTarget,
                 newRemoteSession: $newRemoteSession)
-            Toggle("Auto-expand when done", isOn: $settings.autoExpandOnDone)
-            Toggle("Enable sounds", isOn: $settings.soundEnabled)
-            Toggle("Respect Do Not Disturb", isOn: $settings.respectDND)
-            Picker("Hotkey modifier", selection: $settings.hotkeyModifier) {
-                ForEach(HotkeyModifier.allCases) { Text("\($0.displayName) (\($0.symbols))").tag($0) }
+
+            Section("Behavior") {
+                Toggle("Auto-expand when done", isOn: $settings.autoExpandOnDone)
+                Toggle("Enable sounds", isOn: $settings.soundEnabled)
+                Toggle("Respect Do Not Disturb", isOn: $settings.respectDND)
+                Picker("Compact indicator", selection: $settings.compactIndicatorMode) {
+                    ForEach(CompactIndicatorMode.allCases) { Text($0.displayName).tag($0) }
+                }
+                Text("Reveal on hover keeps a minimal status line visible until you point at it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            Picker("Pill display", selection: $settings.displayPlacement) {
-                ForEach(DisplayPlacement.allCases) { Text($0.displayName).tag($0) }
+
+            Section("Display & keyboard") {
+                Picker("Pill display", selection: $settings.displayPlacement) {
+                    ForEach(DisplayPlacement.allCases) { Text($0.displayName).tag($0) }
+                }
+                Text(displayPlacementHelp)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("Hotkey modifier", selection: $settings.hotkeyModifier) {
+                    ForEach(HotkeyModifier.allCases) {
+                        Text("\($0.displayName) (\($0.symbols))").tag($0)
+                    }
+                }
             }
-            Text(displayPlacementHelp)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
             Section("Jump") {
                 Picker("Terminal app", selection: $settings.preferredTerminal) {
                     ForEach(PreferredTerminal.allCases) { Text($0.displayName).tag($0) }
@@ -49,13 +64,11 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Picker("Compact indicator", selection: $settings.compactIndicatorMode) {
-                ForEach(CompactIndicatorMode.allCases) { Text($0.displayName).tag($0) }
+
+            Section("Startup") {
+                Toggle("Launch at login", isOn: $settings.launchAtLogin)
             }
-            Text("Reveal on hover keeps a minimal status line visible until you point at it.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Toggle("Launch at login", isOn: $settings.launchAtLogin)
+
             Section("Updates") {
                 LabeledContent("Version", value: updates.currentVersionText)
                 Toggle("Check for updates automatically", isOn: $settings.automaticUpdateChecks)
@@ -71,7 +84,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
-        .frame(width: 460, height: 720)
+        .frame(width: 500, height: 740)
         .task {
             // Present Settings immediately, then ask the CLI off the main actor.
             // A failed lookup leaves the cached registry-derived list in place.
@@ -152,27 +165,63 @@ private struct SessionsSection: View {
 
         Section("Remote hosts") {
             ForEach(settings.remoteHosts) { host in
-                LabeledContent {
-                    HStack {
-                        Text(tunnelText(for: host)).font(.caption).foregroundStyle(.secondary)
-                        Button("Remove") { remove(host) }
+                let status = tunnelStatus(for: host)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        Label(host.id, systemImage: "network")
+                        Spacer()
+                        Label(status.title, systemImage: status.symbol)
+                            .font(.caption)
+                            .foregroundStyle(status.color)
+                        Button("Remove", systemImage: "minus.circle") {
+                            remove(host)
+                        }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Remove \(host.id)")
+                        .accessibilityLabel("Remove \(host.id)")
                     }
-                } label: {
-                    Label(host.id, systemImage: "network")
+                    if let detail = status.detail {
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
-            HStack {
-                TextField("ssh target (e.g. workbox)", text: $newRemoteTarget)
-                TextField("session (optional)", text: $newRemoteSession)
-                    .frame(width: 120)
-                Button("Add", action: addRemote)
-                    .disabled(!SSHTarget.isValid(
-                        newRemoteTarget.trimmingCharacters(in: .whitespaces)))
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Add remote host")
+                    .font(.subheadline.weight(.medium))
+                HStack(alignment: .bottom, spacing: 10) {
+                    RemoteHostField(
+                        title: "SSH target",
+                        placeholder: "workbox",
+                        text: $newRemoteTarget)
+                    RemoteHostField(
+                        title: "Session",
+                        placeholder: "All sessions",
+                        text: $newRemoteSession)
+                        .frame(width: 140)
+                    Button("Add", systemImage: "plus", action: addRemote)
+                        .labelStyle(.titleAndIcon)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+                        .disabled(!SSHTarget.isValid(
+                            newRemoteTarget.trimmingCharacters(in: .whitespaces)))
+                }
+                .onSubmit(addRemote)
             }
-            Text("NotchAgent forwards the remote herdr socket over SSH. Key-only auth: "
-                 + "load your key with `ssh-add` first — it can't prompt for a passphrase.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "key")
+                    .foregroundStyle(.secondary)
+                Text("Uses key-only SSH authentication. If your key has a passphrase, "
+                     + "load it with `ssh-add` first.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
 
         Section("Advanced") {
@@ -182,14 +231,78 @@ private struct SessionsSection: View {
                 Text("Track all sessions").tag("")
                 ForEach(availableSessions, id: \.self) { Text($0).tag($0) }
             }
-            HStack {
-                Text("Socket override")
+            LabeledContent("Socket override") {
                 TextField("Auto-discover", text: Binding(
                     get: { settings.socketPathOverride ?? "" },
                     set: { settings.socketPathOverride = $0.isEmpty ? nil : $0 }))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 240)
                     .onSubmit(onSessionChange)
             }
         }
+    }
+
+    private struct RemoteHostField: View {
+        let title: String
+        let placeholder: String
+        @Binding var text: String
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("", text: $text, prompt: Text(placeholder))
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel(title)
+            }
+        }
+    }
+
+    private struct RemoteHostStatus {
+        let title: String
+        let symbol: String
+        let color: Color
+        let detail: String?
+    }
+
+    private func tunnelStatus(for host: RemoteHostConfiguration) -> RemoteHostStatus {
+        guard let registry else {
+            return RemoteHostStatus(
+                title: "Not connected",
+                symbol: "circle",
+                color: .secondary,
+                detail: nil)
+        }
+        let states = registry.tunnelStates.filter { $0.key.hasPrefix("ssh:\(host.target)/") }
+        if states.isEmpty {
+            return RemoteHostStatus(
+                title: "Not connected",
+                symbol: "circle",
+                color: .secondary,
+                detail: nil)
+        }
+        if states.values.contains(where: { $0.isUp }) {
+            return RemoteHostStatus(
+                title: "Connected",
+                symbol: "checkmark.circle.fill",
+                color: .green,
+                detail: nil)
+        }
+        if let failure = states.values.compactMap({ state -> String? in
+            if case let .failed(reason) = state { return reason } else { return nil }
+        }).first {
+            return RemoteHostStatus(
+                title: "Connection failed",
+                symbol: "exclamationmark.triangle.fill",
+                color: .orange,
+                detail: failure)
+        }
+        return RemoteHostStatus(
+            title: "Connecting",
+            symbol: "clock",
+            color: .secondary,
+            detail: nil)
     }
 
     private func addRemote() {
@@ -235,18 +348,5 @@ private struct SessionsSection: View {
             return .orange
         }
         return runtime.connection == .unavailable ? .orange : .secondary
-    }
-
-    private func tunnelText(for host: RemoteHostConfiguration) -> String {
-        guard let registry else { return "" }
-        let states = registry.tunnelStates.filter { $0.key.hasPrefix("ssh:\(host.target)/") }
-        if states.isEmpty { return "not connected" }
-        if states.values.contains(where: { $0.isUp }) { return "connected" }
-        if let failure = states.values.compactMap({ state -> String? in
-            if case let .failed(reason) = state { return reason } else { return nil }
-        }).first {
-            return failure
-        }
-        return "connecting…"
     }
 }
