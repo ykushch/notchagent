@@ -77,9 +77,17 @@ private struct ExpandedNotchHeader: View {
                 .help("Next agent")
             }
             Button(action: model.collapse) {
-                Image(systemName: "chevron.up")
+                Label("Hide", systemImage: "chevron.up")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .padding(.horizontal, 14)
+                    .frame(minWidth: 76, minHeight: 30)
+                    .background(Capsule().fill(.white.opacity(0.16)))
+                    .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 1))
+                    .contentShape(Capsule())
             }
-            .help("Collapse")
+            .accessibilityLabel("Hide notch")
+            .help("Hide notch")
         }
         .font(.system(size: 11, weight: .semibold, design: .rounded))
         .buttonStyle(.plain)

@@ -17,6 +17,8 @@ final class NotchWindowController {
     private var screenPollTimer: Timer?
     private var screenParametersObserver: NSObjectProtocol?
     private var accessibilityObserver: NSObjectProtocol?
+    private var localMouseMonitor: Any?
+    private var globalMouseMonitor: Any?
     private var transitionRevision = 0
 
     init(viewModel: NotchViewModel, settings: Settings) {
@@ -49,6 +51,7 @@ final class NotchWindowController {
         observePresentation()
         observeScreenChanges()
         observeAccessibilityOptions()
+        observeMouseClicks()
         configureScreenPolling()
     }
 
@@ -60,6 +63,14 @@ final class NotchWindowController {
         if let accessibilityObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(accessibilityObserver)
         }
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+        }
+        if let globalMouseMonitor {
+            NSEvent.removeMonitor(globalMouseMonitor)
+        }
+        localMouseMonitor = nil
+        globalMouseMonitor = nil
         panel.orderOut(nil)
     }
 
@@ -117,6 +128,31 @@ final class NotchWindowController {
                 self?.applyPresentation()
             }
         }
+    }
+
+    private func observeMouseClicks() {
+        guard localMouseMonitor == nil, globalMouseMonitor == nil else { return }
+        let mouseDownEvents: NSEvent.EventTypeMask = [
+            .leftMouseDown, .rightMouseDown, .otherMouseDown,
+        ]
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: mouseDownEvents
+        ) { [weak self] event in
+            let location = NSEvent.mouseLocation
+            Task { @MainActor in self?.collapseIfClickIsOutsidePanel(at: location) }
+            return event
+        }
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: mouseDownEvents
+        ) { [weak self] _ in
+            let location = NSEvent.mouseLocation
+            Task { @MainActor in self?.collapseIfClickIsOutsidePanel(at: location) }
+        }
+    }
+
+    private func collapseIfClickIsOutsidePanel(at location: NSPoint) {
+        guard viewModel.isExpanded, !panel.frame.contains(location) else { return }
+        viewModel.collapse()
     }
 
     private func configureScreenPolling() {
