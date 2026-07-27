@@ -54,6 +54,9 @@ extension RequestSending {
 ///   `events.subscribe`, and streams pushed lines, reconnecting with backoff.
 public final class HerdrClient: RequestSending, Sendable {
     public let socketPath: String
+    /// Optional bound for one-shot request reads/writes. Event subscriptions
+    /// deliberately remain unbounded and are interrupted by cancellation.
+    private let requestTimeout: TimeInterval?
     /// **Concurrent** queue: request/response calls use short-lived blocking work,
     /// and the event subscription runs a *long-lived* blocking read loop. A serial
     /// queue would let the events loop's infinite `readLine()` starve every
@@ -62,8 +65,9 @@ public final class HerdrClient: RequestSending, Sendable {
     private let queue = DispatchQueue(label: "dev.notchagent.herdr.socket",
                                       qos: .userInitiated, attributes: .concurrent)
 
-    public init(socketPath: String? = nil) {
+    public init(socketPath: String? = nil, requestTimeout: TimeInterval? = nil) {
         self.socketPath = SocketPath.resolve(explicit: socketPath)
+        self.requestTimeout = requestTimeout
     }
 
     /// Set `HERDR_DEBUG_EVENTS=1` to trace the event loop to stderr.
@@ -82,10 +86,11 @@ public final class HerdrClient: RequestSending, Sendable {
         ])
         let payload = try requestObj.serialized()
         let path = socketPath
+        let requestTimeout = requestTimeout
 
         return try await withCheckedThrowingContinuation { cont in
             queue.async {
-                let conn = SocketConnection(path: path)
+                let conn = SocketConnection(path: path, ioTimeout: requestTimeout)
                 defer { conn.close() }
                 do {
                     try conn.connect()

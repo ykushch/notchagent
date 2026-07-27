@@ -13,13 +13,13 @@ public enum SSHTarget {
     }
 }
 
-/// OpenSSH multiplexing options shared through one deterministic control path.
+/// OpenSSH connection-sharing policy.
 ///
-/// A tunnel may become the master, but must not use `ControlPersist`: OpenSSH
-/// implicitly backgrounds a persistent master after authentication, which would
-/// detach the real forward from `SSHTunnel`'s supervised `Process`. Discovery is
-/// client-only so a short listing command can reuse a tunnel without ever leaving
-/// its own background master behind.
+/// A supervised tunnel must own a dedicated foreground ssh process. Joining an
+/// existing master makes the mux client exit immediately after installing `-L`,
+/// detaching the forward from `SSHTunnel`; becoming a persistent master can
+/// background it with the same result. Discovery is intentionally short-lived,
+/// so it may reuse a separately managed master but never creates one.
 public enum SSHMultiplexing {
     public static func controlPath(for target: String) -> String {
         let digest = SHA256Digest.hex(of: Data(target.utf8)).prefix(12)
@@ -29,8 +29,9 @@ public enum SSHMultiplexing {
 
     public static func tunnelArguments(for target: String) -> [String] {
         [
-            "-o", "ControlMaster=auto",
-            "-o", "ControlPath=\(controlPath(for: target))",
+            "-o", "ControlMaster=no",
+            "-o", "ControlPersist=no",
+            "-o", "ControlPath=none",
         ]
     }
 

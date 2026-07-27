@@ -203,6 +203,21 @@ struct HerdrClientRequestTests {
         }
     }
 
+    @Test("a bounded request cannot hang forever after connecting")
+    func requestTimeout() async throws {
+        let server = FakeHerdrServer { _ in
+            Thread.sleep(forTimeInterval: 0.5)
+            return []
+        }
+        try server.start()
+        defer { server.stop() }
+
+        let client = HerdrClient(socketPath: server.path, requestTimeout: 0.1)
+        await #expect(throws: SocketError.timedOut) {
+            try await client.request("ping")
+        }
+    }
+
     @Test("concurrent requests each get their own connection + correct result")
     func concurrentCorrelation() async throws {
         // Each connect-per-call is independent; assert N concurrent calls all resolve

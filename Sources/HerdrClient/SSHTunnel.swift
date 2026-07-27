@@ -41,6 +41,7 @@ public actor SSHTunnel {
     private let sshPath: String?
     private let backoff: BackoffPolicy
     private let readinessTimeout: TimeInterval
+    private let readinessProbe: @Sendable (String) async -> Bool
     private var process: Process?
     private var superviseTask: Task<Void, Never>?
     private var onStateChange: (@Sendable (State) -> Void)?
@@ -49,12 +50,18 @@ public actor SSHTunnel {
         configuration: Configuration,
         sshPath: String? = ExecutableLocator.locate("ssh"),
         backoff: BackoffPolicy = BackoffPolicy(base: 1.0, max: 30.0),
-        readinessTimeout: TimeInterval = 15
+        readinessTimeout: TimeInterval = 15,
+        readinessProbe: (@Sendable (String) async -> Bool)? = nil
     ) {
         self.configuration = configuration
         self.sshPath = sshPath
         self.backoff = backoff
         self.readinessTimeout = readinessTimeout
+        let probeTimeout = min(max(readinessTimeout, 0.1), 2.0)
+        self.readinessProbe = readinessProbe ?? { socketPath in
+            await HerdrClient(
+                socketPath: socketPath, requestTimeout: probeTimeout).ping()
+        }
     }
 
     // MARK: Arguments
@@ -169,14 +176,16 @@ public actor SSHTunnel {
             handle: errPipe.fileHandleForReading, maximumBytes: 64 * 1024)
         stderrDrain.start()
 
-        // The forward exists once ssh has bound the local socket; poll briefly
-        // rather than assuming, so `.up` means genuinely connectable.
-        let becameReady = await waitForSocket(timeout: readinessTimeout)
+        // A bound local listener proves only that ssh accepted `-L`. The remote
+        // stream-local channel is opened lazily on the first client connection,
+        // where a proxy or sshd may still reject it. Publish `.up` only after a
+        // real herdr request has crossed the complete forward.
+        let becameReady = await waitUntilHerdrResponds(timeout: readinessTimeout)
         if becameReady, process.isRunning { transition(to: .up) }
         let readinessTimedOut = !becameReady && process.isRunning && !Task.isCancelled
         // Do not park in `.connecting` forever. A live ssh process without the
-        // promised socket is not a usable tunnel; terminate it and let supervision
-        // retry with backoff.
+        // promised herdr response is not a usable tunnel; terminate it and let
+        // supervision retry with backoff.
         if readinessTimedOut { process.terminate() }
 
         // ssh can exit before `terminationHandler` is even installed — an auth
@@ -196,7 +205,7 @@ public actor SSHTunnel {
             decoding: stderrDrain.data, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let failure = readinessTimedOut
-            ? "SSH connected to \(configuration.target) but the forwarded socket did not become ready."
+            ? Self.readinessFailure(stderr: stderr, configuration: configuration)
             : Self.explain(stderr: stderr, status: process.terminationStatus,
                            target: configuration.target)
         return RunOutcome(failure: failure, reachedUp: becameReady)
@@ -227,16 +236,35 @@ public actor SSHTunnel {
 
     // MARK: Socket file plumbing
 
-    private func waitForSocket(timeout: TimeInterval) async -> Bool {
+    private func waitUntilHerdrResponds(timeout: TimeInterval) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline, !Task.isCancelled {
-            if FileManager.default.fileExists(atPath: configuration.localSocketPath) {
+            if FileManager.default.fileExists(atPath: configuration.localSocketPath),
+               await readinessProbe(configuration.localSocketPath) {
                 return true
             }
             if process?.isRunning != true { return false }
             try? await Task.sleep(nanoseconds: 150_000_000)
         }
         return false
+    }
+
+    static func readinessFailure(
+        stderr: String, configuration: Configuration
+    ) -> String {
+        let lower = stderr.lowercased()
+        if lower.contains("administratively prohibited")
+            || lower.contains("open failed") {
+            return "SSH connected to \(configuration.target), but its server or proxy refused Unix-socket forwarding."
+        }
+        if lower.contains("no such file or directory") {
+            return "SSH connected to \(configuration.target), but the remote herdr socket does not exist at \(configuration.remoteSocketPath)."
+        }
+        if lower.contains("permission denied") {
+            return "SSH connected to \(configuration.target), but it cannot access the remote herdr socket at \(configuration.remoteSocketPath)."
+        }
+        let base = "SSH connected to \(configuration.target), but herdr did not answer through \(configuration.remoteSocketPath)."
+        return stderr.isEmpty ? base : "\(base) SSH reported: \(stderr)"
     }
 
     private struct RunOutcome {

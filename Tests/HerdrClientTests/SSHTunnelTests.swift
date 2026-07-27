@@ -18,10 +18,13 @@ struct SSHTunnelTests {
         let arguments = SSHTunnel.arguments(for: configuration())
         #expect(arguments.contains("-N"))
         #expect(arguments.last == "workbox")
-        #expect(arguments.contains("ControlMaster=auto"))
-        // A persistent mux master implicitly backgrounds itself, detaching the
-        // real forward from the Process that SSHTunnel supervises.
-        #expect(!arguments.contains { $0.hasPrefix("ControlPersist=") })
+        // A tunnel must remain the foreground process SSHTunnel owns. It cannot
+        // join another master or background itself, including when the user's
+        // ssh config enables connection sharing globally.
+        #expect(arguments.contains("ControlMaster=no"))
+        #expect(arguments.contains("ControlPersist=no"))
+        #expect(arguments.contains("ControlPath=none"))
+        #expect(!arguments.contains("ControlMaster=auto"))
         let forwardIndex = try #require(arguments.firstIndex(of: "-L"))
         #expect(arguments[forwardIndex + 1]
             == "/tmp/notchagent/abc123.sock:/home/you/.config/herdr/herdr.sock")
@@ -92,6 +95,21 @@ struct SSHTunnelTests {
             status: 255, target: "workbox")
         #expect(message.contains("herdr"))
         #expect(message.contains("workbox"))
+    }
+
+    @Test("readiness failures distinguish forwarding policy from a missing socket")
+    func explainsReadinessFailures() {
+        let configuration = configuration()
+        let prohibited = SSHTunnel.readinessFailure(
+            stderr: "channel 2: open failed: administratively prohibited: open failed",
+            configuration: configuration)
+        #expect(prohibited.contains("refused Unix-socket forwarding"))
+
+        let missing = SSHTunnel.readinessFailure(
+            stderr: "connect to /home/you/.config/herdr/herdr.sock: No such file or directory",
+            configuration: configuration)
+        #expect(missing.contains(configuration.remoteSocketPath))
+        #expect(missing.contains("does not exist"))
     }
 
     @Test("unreachable and unresolvable hosts read differently")

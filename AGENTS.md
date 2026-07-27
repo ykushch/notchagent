@@ -120,13 +120,16 @@ NotchApp UI (NSPanel + SwiftUI)  /  notchctl CLI
   `SSHTunnel` runs `ssh -N -L <local>:<remote> <target>` and everything downstream
   connects to an ordinary local socket. `BatchMode=yes` is deliberate — a GUI app
   must fail fast with an explainable error rather than block on a passphrase prompt
-  it cannot answer. Report a dead tunnel as a tunnel problem, never as "herdr isn't
-  running": that sends the user looking on the wrong machine. Tunnel and discovery
-  commands share a per-user OpenSSH control socket. The tunnel may be the mux master
-  but must not use `ControlPersist` (it would detach from process supervision);
-  discovery uses `ControlMaster=no`, so it can reuse a tunnel but never leaves a
-  background master. Local sessions are rediscovered every 10s, while remote
-  listings run every 60s and on configuration changes.
+  it cannot answer. A local listener existing does not prove the lazy remote
+  stream-local channel can open; `SSHTunnel` requires a bounded herdr `ping` through
+  the forward before publishing `.up`. Report a dead tunnel as a tunnel problem,
+  never as "herdr isn't running": that sends the user looking on the wrong machine.
+  A tunnel explicitly disables multiplexing and persistence: it must remain the
+  dedicated foreground process `SSHTunnel` supervises, rather than exit as a mux
+  client or detach as a persistent master. Discovery is short-lived and uses
+  `ControlMaster=no` with a per-user control path, so it may reuse some separately
+  managed master but never leaves one behind. Local sessions are rediscovered every
+  10s, while remote listings run every 60s and on configuration changes.
 - **Interactions are pane-scoped.** `InteractionCoordinator` keeps blocked
   interactions, drafts, errors, read revisions, and response/settle phases keyed
   by pane ID. A busy pane never suppresses another pane's refresh. Selected panes

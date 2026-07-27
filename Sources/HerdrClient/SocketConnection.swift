@@ -10,6 +10,7 @@ import Darwin
 public enum SocketError: Error, Sendable, Equatable {
     case connectFailed(path: String, errno: Int32)
     case writeFailed(errno: Int32)
+    case timedOut
     case closed
     case pathTooLong(path: String)
 }
@@ -25,10 +26,12 @@ public enum SocketError: Error, Sendable, Equatable {
 final class SocketConnection: @unchecked Sendable {
     private var fd: Int32 = -1
     private var readBuffer = Data()
+    private let ioTimeout: TimeInterval?
     let path: String
 
-    init(path: String) {
+    init(path: String, ioTimeout: TimeInterval? = nil) {
         self.path = path
+        self.ioTimeout = ioTimeout
     }
 
     var isOpen: Bool { fd >= 0 }
@@ -37,6 +40,16 @@ final class SocketConnection: @unchecked Sendable {
     func connect() throws {
         let sock = socket(AF_UNIX, SOCK_STREAM, 0)
         guard sock >= 0 else { throw SocketError.connectFailed(path: path, errno: errno) }
+        if let ioTimeout {
+            var timeout = timeval(
+                tv_sec: Int(ioTimeout),
+                tv_usec: Int32((ioTimeout.truncatingRemainder(dividingBy: 1)) * 1_000_000))
+            let size = socklen_t(MemoryLayout<timeval>.size)
+            withUnsafePointer(to: &timeout) { pointer in
+                _ = setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, pointer, size)
+                _ = setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, pointer, size)
+            }
+        }
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -81,6 +94,8 @@ final class SocketConnection: @unchecked Sendable {
                     total += n
                 } else if n < 0 && errno == EINTR {
                     continue
+                } else if errno == EAGAIN || errno == EWOULDBLOCK {
+                    throw SocketError.timedOut
                 } else {
                     throw SocketError.writeFailed(errno: errno)
                 }
@@ -112,6 +127,8 @@ final class SocketConnection: @unchecked Sendable {
                 return nil
             } else if errno == EINTR {
                 continue
+            } else if errno == EAGAIN || errno == EWOULDBLOCK {
+                throw SocketError.timedOut
             } else {
                 throw SocketError.closed
             }

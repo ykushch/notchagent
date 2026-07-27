@@ -6,12 +6,12 @@ import Testing
 ///
 /// A real round-trip needs a reachable sshd, which CI and most dev machines do
 /// not have. The stand-in still drives the parts that are ours: the local socket
-/// is bound before we report `.up`, a failure surfaces ssh's own stderr, and the
-/// socket file is cleaned up on the way out.
+/// must answer a herdr ping before we report `.up`, a failure surfaces ssh's own
+/// stderr, and the socket file is cleaned up on the way out.
 @Suite("SSH tunnel supervision", .serialized)
 struct SSHTunnelSupervisionTests {
-    /// A script that binds the `-L` forward's local socket and then waits, the way
-    /// a working `ssh -N -L` does.
+    /// A script that binds the `-L` forward's local socket and answers herdr
+    /// pings, the way a working `ssh -N -L` reaches the remote server.
     private static let bindingScript = """
         #!/bin/sh
         for arg in "$@"; do
@@ -21,11 +21,15 @@ struct SSHTunnelSupervisionTests {
         done
         local_path="${spec%%:*}"
         python3 -c "
-        import socket, sys, time
+        import json, socket, sys
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.bind(sys.argv[1])
         s.listen(1)
-        while True: time.sleep(0.2)
+        while True:
+          c, _ = s.accept()
+          c.recv(4096)
+          c.sendall((json.dumps({'id':'1','result':{'type':'pong'}}) + chr(10)).encode())
+          c.close()
         " "$local_path"
         """
 
@@ -50,11 +54,15 @@ struct SSHTunnelSupervisionTests {
         done
         local_path="${spec%%:*}"
         python3 -c "
-        import socket, sys, time
+        import json, socket, sys
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.bind(sys.argv[1])
         s.listen(1)
-        while True: time.sleep(0.2)
+        while True:
+          c, _ = s.accept()
+          c.recv(4096)
+          c.sendall((json.dumps({'id':'1','result':{'type':'pong'}}) + chr(10)).encode())
+          c.close()
         " "$local_path"
         """
 
@@ -67,11 +75,38 @@ struct SSHTunnelSupervisionTests {
         done
         local_path="${spec%%:*}"
         python3 -c "
+        import json, socket, sys, time
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.bind(sys.argv[1])
+        s.listen(1)
+        c, _ = s.accept()
+        c.recv(4096)
+        c.sendall((json.dumps({'id':'1','result':{'type':'pong'}}) + chr(10)).encode())
+        c.close()
+        time.sleep(0.25)
+        " "$local_path"
+        """
+
+    /// Models the screenshot's failure: ssh binds locally, but opening the
+    /// remote stream-local channel is rejected only when a client uses it.
+    private static let rejectedForwardScript = """
+        #!/bin/sh
+        for arg in "$@"; do
+          case "$arg" in
+            */*.sock:*) spec="$arg";;
+          esac
+        done
+        local_path="${spec%%:*}"
+        python3 -c "
         import socket, sys, time
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.bind(sys.argv[1])
         s.listen(1)
-        time.sleep(0.25)
+        sys.stderr.write('channel 2: open failed: administratively prohibited: open failed\\n')
+        sys.stderr.flush()
+        while True:
+          c, _ = s.accept()
+          c.close()
         " "$local_path"
         """
 
@@ -90,8 +125,8 @@ struct SSHTunnelSupervisionTests {
             localSocketPath: local)
     }
 
-    @Test("reports .up only once the local socket is actually bound")
-    func reachesUpWhenSocketIsBound() async throws {
+    @Test("reports .up only once herdr answers through the local socket")
+    func reachesUpWhenHerdrResponds() async throws {
         let script = try makeScript(Self.bindingScript, name: "bind")
         defer { try? FileManager.default.removeItem(atPath: script) }
         let socketPath = SSHTunnel.localSocketPath(forSessionID: "ssh:test/bind")
@@ -104,7 +139,8 @@ struct SSHTunnelSupervisionTests {
 
         try await recorder.waitForUp(timeout: 20)
         #expect(await tunnel.state == .up)
-        // `.up` must mean genuinely connectable, not merely "ssh is running".
+        // `.up` must mean a herdr request completed, not merely "ssh is running"
+        // or a listener inode exists.
         #expect(FileManager.default.fileExists(atPath: socketPath))
         #expect(recorder.states.firstIndex(of: .connecting)
             .map { index in recorder.states.firstIndex(of: .up).map { $0 > index } ?? false } ?? false)
@@ -114,6 +150,27 @@ struct SSHTunnelSupervisionTests {
         // tunnel permanently — so teardown has to remove it.
         #expect(!FileManager.default.fileExists(atPath: socketPath))
         #expect(await tunnel.state == .idle)
+    }
+
+    @Test("a bound listener with a rejected remote channel never reports up")
+    func rejectedForwardNeverReachesUp() async throws {
+        let script = try makeScript(Self.rejectedForwardScript, name: "rejected-forward")
+        defer { try? FileManager.default.removeItem(atPath: script) }
+        let socketPath = SSHTunnel.localSocketPath(forSessionID: "ssh:test/rejected")
+        let tunnel = SSHTunnel(
+            configuration: configuration(local: socketPath),
+            sshPath: script,
+            backoff: BackoffPolicy(base: 60, max: 60),
+            readinessTimeout: 0.4)
+        let recorder = StateRecorder()
+        await tunnel.start { recorder.record($0) }
+
+        try await recorder.waitForFailure(timeout: 3)
+        #expect(!recorder.states.contains(.up))
+        #expect(recorder.reasons.contains {
+            $0.contains("refused Unix-socket forwarding")
+        }, "Saw \(recorder.reasons)")
+        await tunnel.stop()
     }
 
     @Test("a stale socket file from a previous crash does not wedge the tunnel")
@@ -174,7 +231,7 @@ struct SSHTunnelSupervisionTests {
         await tunnel.start { recorder.record($0) }
 
         try await recorder.waitForFailure(timeout: 3)
-        #expect(recorder.reasons.contains { $0.contains("did not become ready") })
+        #expect(recorder.reasons.contains { $0.contains("herdr did not answer") })
         await tunnel.stop()
     }
 
@@ -209,7 +266,7 @@ struct SSHTunnelSupervisionTests {
 
         // Five successful reconnects fit comfortably only if each `.up` resets
         // the exponential failure streak.
-        try await recorder.waitForUpCount(5, timeout: 3)
+        try await recorder.waitForUpCount(5, timeout: 4)
         await tunnel.stop()
     }
 }
