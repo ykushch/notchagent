@@ -17,7 +17,7 @@ private func remote(_ target: String, _ name: String = "default") -> ResolvedSes
             kind: .remote(target: target, name: name),
             serverSocketPath: "/home/you/.config/herdr/herdr.sock",
             isRunning: true),
-        socketPath: "/tmp/notchagent/\(target).sock")
+        endpoint: .loopbackTCP(port: 47_891))
 }
 
 private final class RegistryCommandRunner: CommandRunning, @unchecked Sendable {
@@ -40,6 +40,27 @@ private final class RegistryCommandRunner: CommandRunning, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return recordedCalls
+    }
+}
+
+private final class TunnelConfigurationRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [SSHTunnel.Configuration] = []
+
+    func make(_ configuration: SSHTunnel.Configuration) -> SSHTunnel {
+        lock.lock()
+        recorded.append(configuration)
+        lock.unlock()
+        return SSHTunnel(
+            configuration: configuration,
+            sshPath: nil,
+            backoff: BackoffPolicy(base: 60, max: 60))
+    }
+
+    var configurations: [SSHTunnel.Configuration] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
     }
 }
 
@@ -136,7 +157,7 @@ struct SessionRegistryTests {
         // The descriptor keeps the remote path (that's what ssh -L forwards TO)…
         #expect(runtime?.descriptor.serverSocketPath == "/home/you/.config/herdr/herdr.sock")
         // …while the resolved session says where we actually connect.
-        #expect(session.socketPath == "/tmp/notchagent/workbox.sock")
+        #expect(session.endpoint == .loopbackTCP(port: 47_891))
         #expect(runtime?.descriptor.isRemote == true)
     }
 
@@ -245,6 +266,30 @@ struct SessionRegistryTests {
         #expect(runner.calls.filter { $0.0 == "/fake/ssh" }.count == 1)
         #expect(Set(registry.tunnelStates.keys)
             == ["ssh:workbox/default", "ssh:workbox/agents"])
+        registry.stop()
+    }
+
+    @Test("remote sessions get distinct stable loopback ports")
+    func remotePortsAreDistinctAndStable() async {
+        let remoteJSON = """
+            {"sessions":[
+            {"name":"default","running":true,"socket_path":"/remote/default.sock"},
+            {"name":"agents","running":true,"socket_path":"/remote/agents.sock"}]}
+            """
+        let (directory, _) = discoveryDirectory(remoteJSON: remoteJSON)
+        let registry = SessionRegistry()
+        let recorder = TunnelConfigurationRecorder()
+        registry.makeTunnel = { recorder.make($0) }
+        let hosts = [RemoteHostConfiguration(target: "workbox")]
+
+        await registry.refresh(remoteHosts: hosts, directory: directory)
+        let first = recorder.configurations
+        #expect(first.count == 2)
+        #expect(Set(first.map(\.localPort)).count == 2)
+
+        await registry.refresh(remoteHosts: hosts, directory: directory)
+        // Rediscovery reuses both endpoint assignments and live tunnel objects.
+        #expect(recorder.configurations == first)
         registry.stop()
     }
 

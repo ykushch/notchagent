@@ -1,12 +1,13 @@
+import Darwin
 import Foundation
 
-/// Forwards a remote herdr socket to a local path over SSH.
+/// Forwards a remote herdr socket to a loopback TCP port over SSH.
 ///
 /// This is the whole of "remote support". herdr exposes no remote API — its socket
-/// is a Unix socket on the host that runs the server — so rather than inventing a
-/// transport we let OpenSSH forward the socket and point an ordinary
-/// `HerdrClient` at the local end. `SocketConnection` never learns that a session
-/// is remote.
+/// is a Unix socket on the host that runs the server. OpenSSH bridges that remote
+/// socket to a private loopback port and `HerdrClient` speaks the same protocol
+/// over TCP. A TCP local endpoint avoids managed-macOS policies that can deny
+/// access to Unix sockets created by the ssh process despite permissive modes.
 public actor SSHTunnel {
     public enum State: Sendable, Equatable {
         case idle
@@ -25,14 +26,16 @@ public actor SSHTunnel {
         /// Absolute path of the herdr socket **on the remote host**. `ssh -L` does
         /// not tilde-expand this, which is why we ask the remote CLI for it.
         public let remoteSocketPath: String
-        /// Where the forward lands locally.
-        public let localSocketPath: String
+        /// Where the forward lands locally. It is always bound to 127.0.0.1.
+        public let localPort: UInt16
 
-        public init(target: String, remoteSocketPath: String, localSocketPath: String) {
+        public init(target: String, remoteSocketPath: String, localPort: UInt16) {
             self.target = target
             self.remoteSocketPath = remoteSocketPath
-            self.localSocketPath = localSocketPath
+            self.localPort = localPort
         }
+
+        public var localEndpoint: HerdrEndpoint { .loopbackTCP(port: localPort) }
     }
 
     public private(set) var state: State = .idle
@@ -41,7 +44,7 @@ public actor SSHTunnel {
     private let sshPath: String?
     private let backoff: BackoffPolicy
     private let readinessTimeout: TimeInterval
-    private let readinessProbe: @Sendable (String) async -> Bool
+    private let readinessProbe: @Sendable (HerdrEndpoint) async -> Bool
     private var process: Process?
     private var superviseTask: Task<Void, Never>?
     private var onStateChange: (@Sendable (State) -> Void)?
@@ -51,16 +54,16 @@ public actor SSHTunnel {
         sshPath: String? = ExecutableLocator.locate("ssh"),
         backoff: BackoffPolicy = BackoffPolicy(base: 1.0, max: 30.0),
         readinessTimeout: TimeInterval = 15,
-        readinessProbe: (@Sendable (String) async -> Bool)? = nil
+        readinessProbe: (@Sendable (HerdrEndpoint) async -> Bool)? = nil
     ) {
         self.configuration = configuration
         self.sshPath = sshPath
         self.backoff = backoff
         self.readinessTimeout = readinessTimeout
         let probeTimeout = min(max(readinessTimeout, 0.1), 2.0)
-        self.readinessProbe = readinessProbe ?? { socketPath in
+        self.readinessProbe = readinessProbe ?? { endpoint in
             await HerdrClient(
-                socketPath: socketPath, requestTimeout: probeTimeout).ping()
+                endpoint: endpoint, requestTimeout: probeTimeout).ping()
         }
     }
 
@@ -81,35 +84,53 @@ public actor SSHTunnel {
         ] + SSHMultiplexing.tunnelArguments(for: configuration.target) + [
             "-o", "ExitOnForwardFailure=yes",
             "-o", "BatchMode=yes",
+            // A user's SSH config may install app-specific LocalCommand hooks.
+            // A background tunnel must not execute them.
+            "-o", "PermitLocalCommand=no",
             "-o", "ServerAliveInterval=15",
             "-o", "ServerAliveCountMax=3",
             "-o", "ConnectTimeout=10",
-            "-L", "\(configuration.localSocketPath):\(configuration.remoteSocketPath)",
+            "-L", "127.0.0.1:\(configuration.localPort):\(configuration.remoteSocketPath)",
             configuration.target,
         ]
     }
 
-    /// A short, deterministic local socket path for a session.
-    ///
-    /// macOS caps `sockaddr_un.sun_path` at 104 bytes *including* the terminator,
-    /// and connecting fails outright past that — so the path is derived from a
-    /// truncated digest of the session id rather than from the id itself, which
-    /// can be arbitrarily long (`ssh:some-long-host.example.com/some-session`).
-    public static func localSocketPath(
-        forSessionID sessionID: String,
-        directory: String = SSHTunnel.defaultSocketDirectory
-    ) -> String {
-        let digest = SHA256Digest.hex(of: Data(sessionID.utf8)).prefix(12)
-        return (directory as NSString).appendingPathComponent("\(digest).sock")
+    /// Ask the kernel for an unused private loopback port. The registry retains
+    /// the result for the lifetime of the remote session, so rediscovery does not
+    /// churn a live tunnel or its runtime.
+    public static func availableLoopbackPort() throws -> UInt16 {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            throw TunnelError.portAllocationFailed(errno)
+        }
+        defer { Darwin.close(descriptor) }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr = in_addr(s_addr: INADDR_LOOPBACK.bigEndian)
+        let bindResult = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(
+                    descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bindResult == 0 else {
+            throw TunnelError.portAllocationFailed(errno)
+        }
+
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let nameResult = withUnsafeMutablePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.getsockname(descriptor, $0, &length)
+            }
+        }
+        guard nameResult == 0 else {
+            throw TunnelError.portAllocationFailed(errno)
+        }
+        return UInt16(bigEndian: address.sin_port)
     }
-
-    /// Per-user on macOS (`/var/folders/.../T`), unlike the shared `/tmp`
-    /// namespace where another account could pre-create a writable directory.
-    public static let defaultSocketDirectory =
-        (NSTemporaryDirectory() as NSString).appendingPathComponent("notchagent")
-
-    /// The hard limit a local socket path must respect.
-    public static let maxSocketPathLength = 103
 
     // MARK: Lifecycle
 
@@ -126,7 +147,6 @@ public actor SSHTunnel {
         superviseTask?.cancel()
         superviseTask = nil
         terminateProcess()
-        removeSocketFile()
         transition(to: .idle)
     }
 
@@ -151,14 +171,6 @@ public actor SSHTunnel {
         }
         guard let sshPath else { return .failed("Couldn't find the ssh command.") }
         transition(to: .connecting)
-        do {
-            try Self.prepareSocketDirectory(configuration.localSocketPath)
-        } catch {
-            return .failed("Couldn't prepare \(configuration.localSocketPath): \(error)")
-        }
-        // ssh refuses to bind a local socket path that already exists, so a
-        // previous crash would otherwise wedge the tunnel permanently.
-        removeSocketFile()
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: sshPath)
@@ -198,7 +210,6 @@ public actor SSHTunnel {
             if !process.isRunning { gate.resume() }
         }
         self.process = nil
-        removeSocketFile()
         stderrDrain.wait()
 
         let stderr = String(
@@ -234,13 +245,12 @@ public actor SSHTunnel {
         return "SSH tunnel to \(target) failed: \(stderr)"
     }
 
-    // MARK: Socket file plumbing
+    // MARK: Readiness
 
     private func waitUntilHerdrResponds(timeout: TimeInterval) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline, !Task.isCancelled {
-            if FileManager.default.fileExists(atPath: configuration.localSocketPath),
-               await readinessProbe(configuration.localSocketPath) {
+            if await readinessProbe(configuration.localEndpoint) {
                 return true
             }
             if process?.isRunning != true { return false }
@@ -276,20 +286,6 @@ public actor SSHTunnel {
         }
     }
 
-    static func prepareSocketDirectory(_ socketPath: String) throws {
-        guard socketPath.utf8.count <= maxSocketPathLength else {
-            throw TunnelError.socketPathTooLong(socketPath)
-        }
-        let directory = (socketPath as NSString).deletingLastPathComponent
-        try FileManager.default.createDirectory(
-            atPath: directory, withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700])
-    }
-
-    private func removeSocketFile() {
-        try? FileManager.default.removeItem(atPath: configuration.localSocketPath)
-    }
-
     /// Deliberately leaves `terminationHandler` installed: clearing it would
     /// strand the continuation in `runOnce` waiting for an exit it never hears
     /// about.
@@ -306,7 +302,7 @@ public actor SSHTunnel {
     }
 
     public enum TunnelError: Error, Sendable, Equatable {
-        case socketPathTooLong(String)
+        case portAllocationFailed(Int32)
     }
 }
 
@@ -382,8 +378,8 @@ private final class ResumeGate: @unchecked Sendable {
 extension SSHTunnel.TunnelError: LocalizedError {
     public var errorDescription: String? {
         switch self {
-        case let .socketPathTooLong(path):
-            "Socket path is too long for a Unix socket (\(path.utf8.count) > \(SSHTunnel.maxSocketPathLength) bytes): \(path)"
+        case let .portAllocationFailed(code):
+            "Couldn't allocate a private loopback port for the SSH tunnel (errno \(code))."
         }
     }
 }

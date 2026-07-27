@@ -63,7 +63,8 @@ final class SessionRuntime {
     // MARK: Identity
 
     let descriptor: SessionDescriptor
-    let socketPath: String
+    let endpoint: HerdrEndpoint
+    var socketPath: String { endpoint.description }
     var sessionID: String { descriptor.id }
 
     // MARK: Live state
@@ -96,7 +97,7 @@ final class SessionRuntime {
     init(descriptor: SessionDescriptor, client: HerdrClient) {
         self.descriptor = descriptor
         self.client = client
-        self.socketPath = client.socketPath
+        self.endpoint = client.endpoint
         let actions = Actions(client: client)
         let screenProvider = ScreenInteractionProvider(client: client)
         let registry = OpenCodePaneRegistry()
@@ -119,11 +120,11 @@ final class SessionRuntime {
                     provider: screenProvider, actions: actions)))
     }
 
-    /// `socketPath` is explicit on purpose. A remote descriptor's
+    /// `endpoint` is explicit on purpose. A remote descriptor's
     /// `serverSocketPath` lives on the *remote* filesystem; what we connect to is
     /// the local end of its SSH forward, which only the caller knows.
-    convenience init(descriptor: SessionDescriptor, socketPath: String) {
-        self.init(descriptor: descriptor, client: HerdrClient(socketPath: socketPath))
+    convenience init(descriptor: SessionDescriptor, endpoint: HerdrEndpoint) {
+        self.init(descriptor: descriptor, client: HerdrClient(endpoint: endpoint))
     }
 
     // MARK: Lifecycle

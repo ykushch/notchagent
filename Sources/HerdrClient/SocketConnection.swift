@@ -15,7 +15,27 @@ public enum SocketError: Error, Sendable, Equatable {
     case pathTooLong(path: String)
 }
 
-/// A single blocking AF_UNIX stream connection with newline-delimited framing.
+/// Where a `HerdrClient` connects.
+///
+/// Local herdr servers expose Unix sockets. Remote SSH tunnels deliberately
+/// terminate on a loopback TCP port: some managed macOS environments deny
+/// access to Unix sockets created by another process even when their filesystem
+/// permissions allow it.
+public enum HerdrEndpoint: Sendable, Hashable {
+    case unixSocket(path: String)
+    case loopbackTCP(port: UInt16)
+
+    public var description: String {
+        switch self {
+        case let .unixSocket(path):
+            path
+        case let .loopbackTCP(port):
+            "127.0.0.1:\(port)"
+        }
+    }
+}
+
+/// A single blocking stream connection with newline-delimited framing.
 ///
 /// herdr closes the socket after one request/response, so most uses are
 /// connect → write one line → read lines → close. The event subscription keeps
@@ -27,10 +47,15 @@ final class SocketConnection: @unchecked Sendable {
     private var fd: Int32 = -1
     private var readBuffer = Data()
     private let ioTimeout: TimeInterval?
-    let path: String
+    let endpoint: HerdrEndpoint
 
     init(path: String, ioTimeout: TimeInterval? = nil) {
-        self.path = path
+        self.endpoint = .unixSocket(path: path)
+        self.ioTimeout = ioTimeout
+    }
+
+    init(endpoint: HerdrEndpoint, ioTimeout: TimeInterval? = nil) {
+        self.endpoint = endpoint
         self.ioTimeout = ioTimeout
     }
 
@@ -38,18 +63,20 @@ final class SocketConnection: @unchecked Sendable {
 
     /// Establish the connection. Blocking.
     func connect() throws {
-        let sock = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard sock >= 0 else { throw SocketError.connectFailed(path: path, errno: errno) }
-        if let ioTimeout {
-            var timeout = timeval(
-                tv_sec: Int(ioTimeout),
-                tv_usec: Int32((ioTimeout.truncatingRemainder(dividingBy: 1)) * 1_000_000))
-            let size = socklen_t(MemoryLayout<timeval>.size)
-            withUnsafePointer(to: &timeout) { pointer in
-                _ = setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, pointer, size)
-                _ = setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, pointer, size)
-            }
+        switch endpoint {
+        case let .unixSocket(path):
+            try connectUnix(path: path)
+        case let .loopbackTCP(port):
+            try connectLoopback(port: port)
         }
+    }
+
+    private func connectUnix(path: String) throws {
+        let sock = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard sock >= 0 else {
+            throw SocketError.connectFailed(path: path, errno: errno)
+        }
+        configureTimeout(on: sock)
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -67,17 +94,56 @@ final class SocketConnection: @unchecked Sendable {
             }
         }
 
-        let connectResult = withUnsafePointer(to: &addr) { aptr in
-            aptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
-                Foundation.connect(sock, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
+        let result = withUnsafePointer(to: &addr) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Foundation.connect(sock, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        guard connectResult == 0 else {
-            let e = errno
-            Darwin.close(sock)
-            throw SocketError.connectFailed(path: path, errno: e)
+        try finishConnect(result: result, socket: sock, description: path)
+    }
+
+    private func connectLoopback(port: UInt16) throws {
+        let sock = socket(AF_INET, SOCK_STREAM, 0)
+        let description = "127.0.0.1:\(port)"
+        guard sock >= 0 else {
+            throw SocketError.connectFailed(path: description, errno: errno)
         }
-        fd = sock
+        configureTimeout(on: sock)
+
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        addr.sin_addr = in_addr(s_addr: INADDR_LOOPBACK.bigEndian)
+
+        let result = withUnsafePointer(to: &addr) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Foundation.connect(sock, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        try finishConnect(result: result, socket: sock, description: description)
+    }
+
+    private func configureTimeout(on sock: Int32) {
+        if let ioTimeout {
+            var timeout = timeval(
+                tv_sec: Int(ioTimeout),
+                tv_usec: Int32((ioTimeout.truncatingRemainder(dividingBy: 1)) * 1_000_000))
+            let size = socklen_t(MemoryLayout<timeval>.size)
+            withUnsafePointer(to: &timeout) { pointer in
+                _ = setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, pointer, size)
+                _ = setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, pointer, size)
+            }
+        }
+    }
+
+    private func finishConnect(result: Int32, socket: Int32, description: String) throws {
+        guard result == 0 else {
+            let e = errno
+            Darwin.close(socket)
+            throw SocketError.connectFailed(path: description, errno: e)
+        }
+        fd = socket
     }
 
     /// Write bytes followed by a newline. Blocking; retries partial writes.

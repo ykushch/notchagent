@@ -39,6 +39,7 @@ public enum SSHMultiplexing {
         [
             "-o", "ControlMaster=no",
             "-o", "ControlPath=\(controlPath(for: target))",
+            "-o", "PermitLocalCommand=no",
         ]
     }
 }
@@ -49,7 +50,7 @@ public enum SSHMultiplexing {
 /// method and no remote addressing. `herdr --remote` is a *terminal UI* attach —
 /// the server and its Unix socket stay on the remote host. So a session is
 /// identified here by how we reach it: a local Unix socket, or a remote one that
-/// an SSH tunnel forwards to a local path.
+/// an SSH tunnel forwards to a private loopback port.
 public struct SessionDescriptor: Sendable, Hashable, Identifiable {
     public enum Kind: Sendable, Hashable {
         /// A herdr server on this machine.

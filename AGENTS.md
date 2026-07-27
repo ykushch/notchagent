@@ -37,8 +37,8 @@ swift run NotchApp               # launch the notch UI (accessory app; no dock i
 herdr server(s)  — local default, local named sessions, remote hosts over SSH
     │ newline-delimited JSON over a Unix socket
     │ local:  ~/.config/herdr/herdr.sock  (named: ~/.config/herdr/sessions/<n>/herdr.sock)
-    │ remote: SSHTunnel forwards the REMOTE socket to a per-user temp socket,
-    │         so everything below is identical for local and remote
+    │ remote: SSHTunnel forwards the REMOTE socket to a 127.0.0.1 TCP port;
+    │         HerdrClient speaks the same framed protocol over either endpoint
     │
 HerdrClient.request()  → connect-per-call (herdr closes socket after one req/resp)
 HerdrClient.events()   → ONE long-lived connection, reconnects with backoff
@@ -117,10 +117,13 @@ NotchApp UI (NSPanel + SwiftUI)  /  notchctl CLI
   tilde-expand the remote side.
 - **Remote support is an SSH socket forward, nothing more.** herdr exposes no remote
   API; `herdr --remote` is a terminal UI attach whose server stays on the far host.
-  `SSHTunnel` runs `ssh -N -L <local>:<remote> <target>` and everything downstream
-  connects to an ordinary local socket. `BatchMode=yes` is deliberate — a GUI app
-  must fail fast with an explainable error rather than block on a passphrase prompt
-  it cannot answer. A local listener existing does not prove the lazy remote
+  `SSHTunnel` runs `ssh -N -L 127.0.0.1:<port>:<remote-socket> <target>` and
+  `HerdrClient` connects to that private loopback port. Do not switch the local end
+  back to a Unix socket: managed macOS environments can deny a client access to a
+  socket created by ssh even when ownership and mode permit it. `BatchMode=yes` is
+  deliberate — a GUI app must fail fast with an explainable error rather than block
+  on a passphrase prompt it cannot answer. A local listener existing does not prove
+  the lazy remote
   stream-local channel can open; `SSHTunnel` requires a bounded herdr `ping` through
   the forward before publishing `.up`. Report a dead tunnel as a tunnel problem,
   never as "herdr isn't running": that sends the user looking on the wrong machine.

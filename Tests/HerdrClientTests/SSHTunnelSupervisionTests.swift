@@ -7,30 +7,32 @@ import Testing
 /// A real round-trip needs a reachable sshd, which CI and most dev machines do
 /// not have. The stand-in still drives the parts that are ours: the local socket
 /// must answer a herdr ping before we report `.up`, a failure surfaces ssh's own
-/// stderr, and the socket file is cleaned up on the way out.
+/// stderr, and the loopback listener carries actual protocol traffic.
 @Suite("SSH tunnel supervision", .serialized)
 struct SSHTunnelSupervisionTests {
-    /// A script that binds the `-L` forward's local socket and answers herdr
+    /// A script that binds the `-L` forward's local port and answers herdr
     /// pings, the way a working `ssh -N -L` reaches the remote server.
     private static let bindingScript = """
         #!/bin/sh
         for arg in "$@"; do
           case "$arg" in
-            */*.sock:*) spec="$arg";;
+            127.0.0.1:*:*) spec="$arg";;
           esac
         done
-        local_path="${spec%%:*}"
+        remainder="${spec#*:}"
+        local_port="${remainder%%:*}"
         python3 -c "
         import json, socket, sys
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.bind(sys.argv[1])
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(('127.0.0.1', int(sys.argv[1])))
         s.listen(1)
         while True:
           c, _ = s.accept()
           c.recv(4096)
           c.sendall((json.dumps({'id':'1','result':{'type':'pong'}}) + chr(10)).encode())
           c.close()
-        " "$local_path"
+        " "$local_port"
         """
 
     private static let failingScript = """
@@ -49,42 +51,46 @@ struct SSHTunnelSupervisionTests {
         head -c 262144 /dev/zero >&2
         for arg in "$@"; do
           case "$arg" in
-            */*.sock:*) spec="$arg";;
+            127.0.0.1:*:*) spec="$arg";;
           esac
         done
-        local_path="${spec%%:*}"
+        remainder="${spec#*:}"
+        local_port="${remainder%%:*}"
         python3 -c "
         import json, socket, sys
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.bind(sys.argv[1])
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(('127.0.0.1', int(sys.argv[1])))
         s.listen(1)
         while True:
           c, _ = s.accept()
           c.recv(4096)
           c.sendall((json.dumps({'id':'1','result':{'type':'pong'}}) + chr(10)).encode())
           c.close()
-        " "$local_path"
+        " "$local_port"
         """
 
     private static let shortLivedBindingScript = """
         #!/bin/sh
         for arg in "$@"; do
           case "$arg" in
-            */*.sock:*) spec="$arg";;
+            127.0.0.1:*:*) spec="$arg";;
           esac
         done
-        local_path="${spec%%:*}"
+        remainder="${spec#*:}"
+        local_port="${remainder%%:*}"
         python3 -c "
         import json, socket, sys, time
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.bind(sys.argv[1])
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(('127.0.0.1', int(sys.argv[1])))
         s.listen(1)
         c, _ = s.accept()
         c.recv(4096)
         c.sendall((json.dumps({'id':'1','result':{'type':'pong'}}) + chr(10)).encode())
         c.close()
         time.sleep(0.25)
-        " "$local_path"
+        " "$local_port"
         """
 
     /// Models the screenshot's failure: ssh binds locally, but opening the
@@ -93,21 +99,23 @@ struct SSHTunnelSupervisionTests {
         #!/bin/sh
         for arg in "$@"; do
           case "$arg" in
-            */*.sock:*) spec="$arg";;
+            127.0.0.1:*:*) spec="$arg";;
           esac
         done
-        local_path="${spec%%:*}"
+        remainder="${spec#*:}"
+        local_port="${remainder%%:*}"
         python3 -c "
         import socket, sys, time
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.bind(sys.argv[1])
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(('127.0.0.1', int(sys.argv[1])))
         s.listen(1)
         sys.stderr.write('channel 2: open failed: administratively prohibited: open failed\\n')
         sys.stderr.flush()
         while True:
           c, _ = s.accept()
           c.close()
-        " "$local_path"
+        " "$local_port"
         """
 
     private func makeScript(_ body: String, name: String) throws -> String {
@@ -118,22 +126,21 @@ struct SSHTunnelSupervisionTests {
         return path
     }
 
-    private func configuration(local: String) -> SSHTunnel.Configuration {
+    private func configuration(localPort: UInt16) -> SSHTunnel.Configuration {
         SSHTunnel.Configuration(
             target: "workbox",
             remoteSocketPath: "/home/you/.config/herdr/herdr.sock",
-            localSocketPath: local)
+            localPort: localPort)
     }
 
-    @Test("reports .up only once herdr answers through the local socket")
+    @Test("reports .up only once herdr answers through the loopback port")
     func reachesUpWhenHerdrResponds() async throws {
         let script = try makeScript(Self.bindingScript, name: "bind")
         defer { try? FileManager.default.removeItem(atPath: script) }
-        let socketPath = SSHTunnel.localSocketPath(forSessionID: "ssh:test/bind")
-        try? FileManager.default.removeItem(atPath: socketPath)
+        let port = try SSHTunnel.availableLoopbackPort()
 
         let tunnel = SSHTunnel(
-            configuration: configuration(local: socketPath), sshPath: script)
+            configuration: configuration(localPort: port), sshPath: script)
         let recorder = StateRecorder()
         await tunnel.start { recorder.record($0) }
 
@@ -141,14 +148,10 @@ struct SSHTunnelSupervisionTests {
         #expect(await tunnel.state == .up)
         // `.up` must mean a herdr request completed, not merely "ssh is running"
         // or a listener inode exists.
-        #expect(FileManager.default.fileExists(atPath: socketPath))
         #expect(recorder.states.firstIndex(of: .connecting)
             .map { index in recorder.states.firstIndex(of: .up).map { $0 > index } ?? false } ?? false)
 
         await tunnel.stop()
-        // A leftover socket file makes the next ssh refuse to bind, wedging the
-        // tunnel permanently — so teardown has to remove it.
-        #expect(!FileManager.default.fileExists(atPath: socketPath))
         #expect(await tunnel.state == .idle)
     }
 
@@ -156,9 +159,9 @@ struct SSHTunnelSupervisionTests {
     func rejectedForwardNeverReachesUp() async throws {
         let script = try makeScript(Self.rejectedForwardScript, name: "rejected-forward")
         defer { try? FileManager.default.removeItem(atPath: script) }
-        let socketPath = SSHTunnel.localSocketPath(forSessionID: "ssh:test/rejected")
+        let port = try SSHTunnel.availableLoopbackPort()
         let tunnel = SSHTunnel(
-            configuration: configuration(local: socketPath),
+            configuration: configuration(localPort: port),
             sshPath: script,
             backoff: BackoffPolicy(base: 60, max: 60),
             readinessTimeout: 0.4)
@@ -173,33 +176,14 @@ struct SSHTunnelSupervisionTests {
         await tunnel.stop()
     }
 
-    @Test("a stale socket file from a previous crash does not wedge the tunnel")
-    func clearsStaleSocketFile() async throws {
-        let script = try makeScript(Self.bindingScript, name: "stale")
-        defer { try? FileManager.default.removeItem(atPath: script) }
-        let socketPath = SSHTunnel.localSocketPath(forSessionID: "ssh:test/stale")
-        try SSHTunnel.prepareSocketDirectory(socketPath)
-        // Simulate the leftover from a hard kill.
-        FileManager.default.createFile(atPath: socketPath, contents: Data("stale".utf8))
-        #expect(FileManager.default.fileExists(atPath: socketPath))
-
-        let tunnel = SSHTunnel(
-            configuration: configuration(local: socketPath), sshPath: script)
-        let recorder = StateRecorder()
-        await tunnel.start { recorder.record($0) }
-        try await recorder.waitForUp(timeout: 20)
-        #expect(await tunnel.state == .up)
-        await tunnel.stop()
-    }
-
     @Test("ssh failing surfaces its own reason and retries rather than giving up")
     func surfacesFailureAndRetries() async throws {
         let script = try makeScript(Self.failingScript, name: "fail")
         defer { try? FileManager.default.removeItem(atPath: script) }
-        let socketPath = SSHTunnel.localSocketPath(forSessionID: "ssh:test/fail")
+        let port = try SSHTunnel.availableLoopbackPort()
 
         let tunnel = SSHTunnel(
-            configuration: configuration(local: socketPath),
+            configuration: configuration(localPort: port),
             sshPath: script,
             backoff: BackoffPolicy(base: 0.2, max: 0.2))
         let recorder = StateRecorder()
@@ -217,13 +201,13 @@ struct SSHTunnelSupervisionTests {
         await tunnel.stop()
     }
 
-    @Test("a live ssh process without a socket times out and retries")
+    @Test("a live ssh process without a listener times out and retries")
     func readinessTimeoutDoesNotParkConnecting() async throws {
         let script = try makeScript(Self.noSocketScript, name: "no-socket")
         defer { try? FileManager.default.removeItem(atPath: script) }
-        let socketPath = SSHTunnel.localSocketPath(forSessionID: "ssh:test/no-socket")
+        let port = try SSHTunnel.availableLoopbackPort()
         let tunnel = SSHTunnel(
-            configuration: configuration(local: socketPath),
+            configuration: configuration(localPort: port),
             sshPath: script,
             backoff: BackoffPolicy(base: 60, max: 60),
             readinessTimeout: 0.2)
@@ -239,9 +223,9 @@ struct SSHTunnelSupervisionTests {
     func drainsStderrBeforeExit() async throws {
         let script = try makeScript(Self.noisyBindingScript, name: "noisy")
         defer { try? FileManager.default.removeItem(atPath: script) }
-        let socketPath = SSHTunnel.localSocketPath(forSessionID: "ssh:test/noisy")
+        let port = try SSHTunnel.availableLoopbackPort()
         let tunnel = SSHTunnel(
-            configuration: configuration(local: socketPath),
+            configuration: configuration(localPort: port),
             sshPath: script,
             readinessTimeout: 2)
         let recorder = StateRecorder()
@@ -255,9 +239,9 @@ struct SSHTunnelSupervisionTests {
     func healthyConnectionResetsBackoff() async throws {
         let script = try makeScript(Self.shortLivedBindingScript, name: "short-lived")
         defer { try? FileManager.default.removeItem(atPath: script) }
-        let socketPath = SSHTunnel.localSocketPath(forSessionID: "ssh:test/short-lived")
+        let port = try SSHTunnel.availableLoopbackPort()
         let tunnel = SSHTunnel(
-            configuration: configuration(local: socketPath),
+            configuration: configuration(localPort: port),
             sshPath: script,
             backoff: BackoffPolicy(base: 0.2, max: 2),
             readinessTimeout: 1)

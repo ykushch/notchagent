@@ -53,7 +53,10 @@ extension RequestSending {
 /// - `events(_:)` opens a *separate* long-lived connection, sends
 ///   `events.subscribe`, and streams pushed lines, reconnecting with backoff.
 public final class HerdrClient: RequestSending, Sendable {
-    public let socketPath: String
+    public let endpoint: HerdrEndpoint
+    /// Kept for local-session callers and diagnostics. Remote endpoints return
+    /// their loopback address instead of pretending to be a filesystem path.
+    public var socketPath: String { endpoint.description }
     /// Optional bound for one-shot request reads/writes. Event subscriptions
     /// deliberately remain unbounded and are interrupted by cancellation.
     private let requestTimeout: TimeInterval?
@@ -66,7 +69,12 @@ public final class HerdrClient: RequestSending, Sendable {
                                       qos: .userInitiated, attributes: .concurrent)
 
     public init(socketPath: String? = nil, requestTimeout: TimeInterval? = nil) {
-        self.socketPath = SocketPath.resolve(explicit: socketPath)
+        self.endpoint = .unixSocket(path: SocketPath.resolve(explicit: socketPath))
+        self.requestTimeout = requestTimeout
+    }
+
+    public init(endpoint: HerdrEndpoint, requestTimeout: TimeInterval? = nil) {
+        self.endpoint = endpoint
         self.requestTimeout = requestTimeout
     }
 
@@ -85,12 +93,12 @@ public final class HerdrClient: RequestSending, Sendable {
             "params": params,
         ])
         let payload = try requestObj.serialized()
-        let path = socketPath
+        let endpoint = endpoint
         let requestTimeout = requestTimeout
 
         return try await withCheckedThrowingContinuation { cont in
             queue.async {
-                let conn = SocketConnection(path: path, ioTimeout: requestTimeout)
+                let conn = SocketConnection(endpoint: endpoint, ioTimeout: requestTimeout)
                 defer { conn.close() }
                 do {
                     try conn.connect()
@@ -129,7 +137,7 @@ public final class HerdrClient: RequestSending, Sendable {
         subscriptions: @escaping @Sendable () -> [Subscription],
         backoff: BackoffPolicy = .default
     ) -> AsyncStream<JSONValue> {
-        let path = socketPath
+        let endpoint = endpoint
         let queue = self.queue
         let debugEvents = self.debugEvents
         return AsyncStream { continuation in
@@ -138,7 +146,7 @@ public final class HerdrClient: RequestSending, Sendable {
             queue.async {
                 var attempt = 0
                 while !state.isStopped {
-                    let conn = SocketConnection(path: path)
+                    let conn = SocketConnection(endpoint: endpoint)
                     do {
                         try conn.connect()
                         state.setConnection(conn)

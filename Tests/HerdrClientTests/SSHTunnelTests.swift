@@ -7,10 +7,10 @@ struct SSHTunnelTests {
     private func configuration(
         target: String = "workbox",
         remote: String = "/home/you/.config/herdr/herdr.sock",
-        local: String = "/tmp/notchagent/abc123.sock"
+        localPort: UInt16 = 47_891
     ) -> SSHTunnel.Configuration {
         SSHTunnel.Configuration(
-            target: target, remoteSocketPath: remote, localSocketPath: local)
+            target: target, remoteSocketPath: remote, localPort: localPort)
     }
 
     @Test("forwards the socket and nothing else")
@@ -25,9 +25,10 @@ struct SSHTunnelTests {
         #expect(arguments.contains("ControlPersist=no"))
         #expect(arguments.contains("ControlPath=none"))
         #expect(!arguments.contains("ControlMaster=auto"))
+        #expect(arguments.contains("PermitLocalCommand=no"))
         let forwardIndex = try #require(arguments.firstIndex(of: "-L"))
         #expect(arguments[forwardIndex + 1]
-            == "/tmp/notchagent/abc123.sock:/home/you/.config/herdr/herdr.sock")
+            == "127.0.0.1:47891:/home/you/.config/herdr/herdr.sock")
     }
 
     @Test("fails fast instead of hanging a GUI app on a prompt")
@@ -42,39 +43,10 @@ struct SSHTunnelTests {
         #expect(arguments.contains("ServerAliveCountMax=3"))
     }
 
-    @Test("local socket paths stay inside the Unix sun_path limit")
-    func socketPathsRespectSunPathLimit() {
-        // macOS caps sockaddr_un.sun_path at 104 bytes including the terminator,
-        // and a session id can be arbitrarily long.
-        let absurd = "ssh:" + String(repeating: "very-long-host-name.example.com", count: 12)
-            + "/" + String(repeating: "session", count: 20)
-        for sessionID in ["local:default", "ssh:workbox/agents", absurd] {
-            let path = SSHTunnel.localSocketPath(forSessionID: sessionID)
-            #expect(path.utf8.count <= SSHTunnel.maxSocketPathLength)
-            #expect(path.hasPrefix(SSHTunnel.defaultSocketDirectory))
-            #expect(path.hasSuffix(".sock"))
-        }
-        #expect(SSHTunnel.defaultSocketDirectory.hasPrefix(NSTemporaryDirectory()))
-        #expect(SSHTunnel.defaultSocketDirectory != "/tmp/notchagent")
-    }
-
-    @Test("socket paths are deterministic per session and distinct across sessions")
-    func socketPathsAreStableAndUnique() {
-        let a = SSHTunnel.localSocketPath(forSessionID: "ssh:workbox/default")
-        let b = SSHTunnel.localSocketPath(forSessionID: "ssh:workbox/agents")
-        let c = SSHTunnel.localSocketPath(forSessionID: "ssh:buildbox/default")
-        // Stable: restarting must reuse the same path, not leak a new socket file.
-        #expect(a == SSHTunnel.localSocketPath(forSessionID: "ssh:workbox/default"))
-        // Unique: two tunnels must never fight over one path.
-        #expect(Set([a, b, c]).count == 3)
-    }
-
-    @Test("an over-long socket path is rejected before ssh is launched")
-    func rejectsOverLongPath() {
-        let tooLong = "/tmp/" + String(repeating: "x", count: 120) + ".sock"
-        #expect(throws: SSHTunnel.TunnelError.socketPathTooLong(tooLong)) {
-            try SSHTunnel.prepareSocketDirectory(tooLong)
-        }
+    @Test("allocates a private loopback port")
+    func allocatesLoopbackPort() throws {
+        let port = try SSHTunnel.availableLoopbackPort()
+        #expect(port > 0)
     }
 
     @Test("auth failure is explained as auth, not as a missing server")
@@ -135,7 +107,7 @@ struct SSHTunnelTests {
     @Test("a tunnel with no ssh binary fails instead of hanging")
     func missingSSHFails() async {
         let tunnel = SSHTunnel(
-            configuration: configuration(local: "/tmp/notchagent/test-nossh.sock"),
+            configuration: configuration(),
             sshPath: nil,
             backoff: BackoffPolicy(base: 60, max: 60))
         let states = StateRecorder()
@@ -160,14 +132,12 @@ struct SSHTunnelTests {
         #expect(states.reasons.contains { $0.contains("Invalid SSH target") })
     }
 
-    @Test("stopping an idle tunnel is safe and leaves no socket behind")
+    @Test("stopping an idle tunnel is safe")
     func stopIsIdempotent() async {
-        let path = "/tmp/notchagent/test-idle.sock"
-        let tunnel = SSHTunnel(configuration: configuration(local: path), sshPath: nil)
+        let tunnel = SSHTunnel(configuration: configuration(), sshPath: nil)
         await tunnel.stop()
         await tunnel.stop()
         #expect(await tunnel.state == .idle)
-        #expect(!FileManager.default.fileExists(atPath: path))
     }
 }
 

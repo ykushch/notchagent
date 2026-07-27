@@ -107,6 +107,7 @@ struct SessionDirectoryTests {
         // Discovery may reuse the tunnel's master but must never create a
         // background master of its own when no tunnel is available.
         #expect(arguments.contains("ControlMaster=no"))
+        #expect(arguments.contains("PermitLocalCommand=no"))
         #expect(!arguments.contains("ControlMaster=auto"))
         #expect(!arguments.contains { $0.hasPrefix("ControlPersist=") })
         #expect(arguments.contains {

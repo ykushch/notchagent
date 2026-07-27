@@ -1,26 +1,28 @@
+import Darwin
 import Foundation
 import HerdrClient
 import Observation
 
-/// A session plus the socket we actually dial for it.
+/// A session plus the endpoint we actually dial for it.
 ///
 /// The two differ for remote sessions: `descriptor.serverSocketPath` is a path on
-/// the remote filesystem, while `socketPath` is the local end of its SSH forward.
+/// the remote filesystem, while `endpoint` is the local end of its SSH forward.
 struct ResolvedSession: Sendable, Equatable {
     let descriptor: SessionDescriptor
-    let socketPath: String
+    let endpoint: HerdrEndpoint
 
     var id: String { descriptor.id }
+    var socketPath: String { endpoint.description }
 
     /// A local session dials the socket herdr reported directly.
     init(local descriptor: SessionDescriptor) {
         self.descriptor = descriptor
-        self.socketPath = descriptor.serverSocketPath
+        self.endpoint = .unixSocket(path: descriptor.serverSocketPath)
     }
 
-    init(descriptor: SessionDescriptor, socketPath: String) {
+    init(descriptor: SessionDescriptor, endpoint: HerdrEndpoint) {
         self.descriptor = descriptor
-        self.socketPath = socketPath
+        self.endpoint = endpoint
     }
 }
 
@@ -65,6 +67,9 @@ final class SessionRegistry {
 
     @ObservationIgnored private var runtimesByID: [String: SessionRuntime] = [:]
     @ObservationIgnored private var tunnels: [String: SSHTunnel] = [:]
+    /// Kernel-selected loopback ports are stable while a remote session remains
+    /// tracked, so routine rediscovery does not rebuild its tunnel and runtime.
+    @ObservationIgnored private var remotePorts: [String: UInt16] = [:]
     /// Remote sessions discovered over ssh, whether or not their tunnel is up yet.
     @ObservationIgnored private var knownRemoteSessions: [String: ResolvedSession] = [:]
     @ObservationIgnored private var localSessions: [ResolvedSession] = []
@@ -133,7 +138,7 @@ final class SessionRegistry {
 
         for (id, session) in wanted {
             guard let runtime = runtimesByID[id],
-                  runtime.socketPath != session.socketPath else { continue }
+                  runtime.endpoint != session.endpoint else { continue }
             // Discovery is authoritative. Reusing this runtime would leave every
             // request dialing the old socket forever.
             runtime.stop()
@@ -142,7 +147,7 @@ final class SessionRegistry {
 
         for session in wanted.values where runtimesByID[session.id] == nil {
             let runtime = SessionRuntime(
-                descriptor: session.descriptor, socketPath: session.socketPath)
+                descriptor: session.descriptor, endpoint: session.endpoint)
             runtimesByID[session.id] = runtime
             if isStarted, let host { runtime.start(host: host) }
         }
@@ -214,14 +219,21 @@ final class SessionRegistry {
             )
             guard !Task.isCancelled else { return }
             switch result {
-            case let .success(sessions):
+            case let .success(descriptors):
                 // A successful listing is authoritative for this host. Remove its
                 // old entries before adding the sessions that still match the
                 // user's configuration.
                 discoveredRemote = discoveredRemote.filter {
                     $0.value.descriptor.kind.sshTarget != target
                 }
-                for session in sessions { discoveredRemote[session.id] = session }
+                for descriptor in descriptors {
+                    do {
+                        let session = try resolvedRemoteSession(descriptor)
+                        discoveredRemote[session.id] = session
+                    } catch {
+                        remoteFailures.append(Self.describe(error))
+                    }
+                }
             case let .failure(error):
                 // Keep the last known sessions and their live tunnels. A temporary
                 // inability to list a host is not evidence that its sessions ended.
@@ -282,19 +294,14 @@ final class SessionRegistry {
         target: String,
         configurations: [RemoteHostConfiguration],
         directory: SessionDirectory
-    ) async -> Result<[ResolvedSession], any Error> {
+    ) async -> Result<[SessionDescriptor], any Error> {
         await Task.detached(priority: .utility) {
             do {
                 let tracksEverySession = configurations.contains { $0.sessionName == nil }
                 let selectedNames = Set(configurations.compactMap(\.sessionName))
-                let sessions = try directory.remoteSessions(target: target)
+                return .success(try directory.remoteSessions(target: target)
                     .filter(\.isRunning)
-                    .filter { tracksEverySession || selectedNames.contains($0.kind.name) }
-                return .success(sessions.map { descriptor in
-                    ResolvedSession(
-                        descriptor: descriptor,
-                        socketPath: SSHTunnel.localSocketPath(forSessionID: descriptor.id))
-                })
+                    .filter { tracksEverySession || selectedNames.contains($0.kind.name) })
             } catch {
                 return .failure(error)
             }
@@ -303,6 +310,30 @@ final class SessionRegistry {
 
     // MARK: Tunnels
 
+    private func resolvedRemoteSession(
+        _ descriptor: SessionDescriptor
+    ) throws -> ResolvedSession {
+        let port: UInt16
+        if let existing = remotePorts[descriptor.id] {
+            port = existing
+        } else {
+            let usedPorts = Set(remotePorts.values)
+            var candidate = try SSHTunnel.availableLoopbackPort()
+            var attempts = 1
+            while usedPorts.contains(candidate), attempts < 32 {
+                candidate = try SSHTunnel.availableLoopbackPort()
+                attempts += 1
+            }
+            guard !usedPorts.contains(candidate) else {
+                throw SSHTunnel.TunnelError.portAllocationFailed(EADDRINUSE)
+            }
+            port = candidate
+            remotePorts[descriptor.id] = port
+        }
+        return ResolvedSession(
+            descriptor: descriptor, endpoint: .loopbackTCP(port: port))
+    }
+
     /// Start a tunnel for each newly discovered remote session, and tear down the
     /// ones whose session has gone away.
     private func reconcileTunnels(for discovered: [String: ResolvedSession]) {
@@ -310,6 +341,7 @@ final class SessionRegistry {
             tunnels[id] = nil
             tunnelStates[id] = nil
             knownRemoteSessions[id] = nil
+            remotePorts[id] = nil
             Task { await tunnel.stop() }
         }
 
@@ -326,11 +358,12 @@ final class SessionRegistry {
             }
             knownRemoteSessions[id] = session
             guard tunnels[id] == nil,
-                  let target = session.descriptor.kind.sshTarget else { continue }
+                  let target = session.descriptor.kind.sshTarget,
+                  case let .loopbackTCP(port) = session.endpoint else { continue }
             let tunnel = makeTunnel(SSHTunnel.Configuration(
                 target: target,
                 remoteSocketPath: session.descriptor.serverSocketPath,
-                localSocketPath: session.socketPath))
+                localPort: port))
             tunnels[id] = tunnel
             tunnelStates[id] = .connecting
             Task {
