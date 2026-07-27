@@ -51,6 +51,59 @@ an accelerator. The UI stays thin and every response remains explicitly user-dri
   client attached to it, before NotchAgent can discover or control agents.
 - No third-party dependencies (Foundation/AppKit/SwiftUI + POSIX sockets).
 
+## Remote hosts
+
+NotchAgent can track herdr sessions on another machine through SSH. It uses your
+normal OpenSSH configuration, so aliases, identity files, jump hosts, and
+`ProxyCommand` entries continue to work.
+
+First, make sure the remote host is available non-interactively. A typical
+`~/.ssh/config` entry looks like:
+
+```sshconfig
+Host workbox
+    HostName workbox.example.com
+    User yourname
+    IdentityFile ~/.ssh/id_ed25519
+```
+
+Load a passphrase-protected key into the SSH agent, then verify the same alias
+works without prompting:
+
+```bash
+ssh-add ~/.ssh/id_ed25519
+ssh -o BatchMode=yes workbox 'herdr session list --json'
+```
+
+If `herdr` is installed under `~/.local/bin` and is not on the remote
+non-login `PATH`, use this verification command instead:
+
+```bash
+ssh -o BatchMode=yes workbox '$HOME/.local/bin/herdr session list --json'
+```
+
+Then open **Notch Agent Settings → Remote hosts**:
+
+1. Enter the SSH alias (`workbox` in the example) under **SSH target**.
+2. Leave **Session** empty to track every running herdr session on that host, or
+   enter one session name to track only that session.
+3. Click **Add**. The row changes to **Connected** only after NotchAgent reaches
+   herdr through the completed SSH tunnel.
+
+The remote herdr socket is forwarded to a private loopback port on your Mac; it
+is not exposed on the network. NotchAgent runs SSH in batch mode because a
+background GUI cannot answer password, host-key, or key-passphrase prompts.
+
+If the host does not connect:
+
+- Run `ssh workbox` once in a terminal and accept any new host key.
+- If SSH reports `Permission denied (publickey)`, load the correct key with
+  `ssh-add` and check the matching `Host` entry.
+- Confirm herdr is running remotely and that `herdr session list --json`
+  reports a running session with a socket path.
+- Read the error shown below the remote host in Settings. Authentication,
+  discovery, missing-socket, and forwarding failures are reported separately.
+
 ## Install
 
 With Homebrew:
