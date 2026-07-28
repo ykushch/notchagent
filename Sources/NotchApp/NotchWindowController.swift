@@ -26,11 +26,7 @@ final class NotchWindowController {
         self.settings = settings
         let screen = Self.preferredScreen(for: settings)
         let geometry = NotchGeometry(metrics: NotchScreenMetrics(screen: screen))
-        let compactRevealed = settings.compactIndicatorMode == .alwaysShow
-        let frame = geometry.panelFrame(
-            on: screen.frame,
-            expanded: false,
-            compactRevealed: compactRevealed)
+        let frame = geometry.panelFrame(on: screen.frame, size: geometry.compactCanvasSize)
         let surfaceState = NotchSurfaceState(
             geometry: geometry,
             reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
@@ -87,7 +83,6 @@ final class NotchWindowController {
             _ = settings.customTerminalAppName
             _ = settings.customTerminalBundleID
             _ = settings.compactIndicatorMode
-            _ = surfaceState.isCompactIndicatorRevealed
             _ = surfaceState.requestedExpandedHeight
         } onChange: { [weak self] in
             Task { @MainActor in
@@ -329,10 +324,7 @@ final class NotchWindowController {
         geometry: NotchGeometry
     ) {
         guard transitionRevision == revision, !viewModel.isExpanded else { return }
-        let frame = geometry.panelFrame(
-            on: screen.frame,
-            expanded: false,
-            compactRevealed: surfaceState.isCompactIndicatorRevealed)
+        let frame = geometry.panelFrame(on: screen.frame, size: geometry.compactCanvasSize)
         setPanelFrame(
             frame,
             animated: !surfaceState.reduceMotion && surfaceState.presentation == .compact)

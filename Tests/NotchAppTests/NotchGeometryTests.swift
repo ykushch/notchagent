@@ -20,6 +20,7 @@ struct NotchGeometryTests {
         #expect(NotchGeometry.physicalNotchWidth(metrics: metrics) == 200)
         #expect(geometry.compactSize(revealed: false) == CGSize(width: 208, height: 35))
         #expect(geometry.compactSize(revealed: true) == CGSize(width: 208, height: 44))
+        #expect(geometry.compactCanvasSize == CGSize(width: 208, height: 44))
         #expect(geometry.topContentInset == 32)
     }
 
@@ -46,6 +47,7 @@ struct NotchGeometryTests {
 
         #expect(geometry.compactSize(revealed: false) == CGSize(width: 190, height: 3))
         #expect(geometry.compactSize(revealed: true) == CGSize(width: 190, height: 12))
+        #expect(geometry.compactCanvasSize == CGSize(width: 190, height: 12))
         #expect(geometry.topContentInset == 0)
     }
 

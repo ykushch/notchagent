@@ -75,6 +75,13 @@ struct NotchGeometry: Sendable, Equatable {
         return CGSize(width: compactWidth, height: topContentInset + indicatorHeight)
     }
 
+    /// The panel keeps this fixed compact canvas while the visible indicator
+    /// reveals inside it. Resizing the window itself from an `onHover` change
+    /// moves its tracking area under the pointer and can make the notch jump.
+    var compactCanvasSize: CGSize {
+        compactSize(revealed: true)
+    }
+
     var minimumOverviewHeight: CGFloat {
         min(maximumExpandedHeight, max(190, topContentInset + 150))
     }
