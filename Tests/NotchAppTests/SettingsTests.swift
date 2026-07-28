@@ -6,6 +6,19 @@ import Testing
 @MainActor
 @Suite("Settings")
 struct SettingsTests {
+    @Test("Accessibility launch prompt defaults on and can be disabled persistently")
+    func accessibilityLaunchPromptPersistence() {
+        let suiteName = "NotchAppTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let initial = Settings(defaults: defaults)
+        #expect(initial.askForAccessibilityOnLaunch)
+
+        initial.askForAccessibilityOnLaunch = false
+        #expect(!Settings(defaults: defaults).askForAccessibilityOnLaunch)
+    }
+
     @Test("Compact indicator defaults to reveal on hover and persists")
     func compactIndicatorPersistence() {
         let suiteName = "NotchAppTests.\(UUID().uuidString)"

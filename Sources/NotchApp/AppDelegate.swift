@@ -27,7 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let monitor = HotkeyMonitor(viewModel: model, settings: settings)
         monitor.start()
-        if !HotkeyMonitor.accessibilityGranted() { HotkeyMonitor.promptForAccessibility() }
+        if settings.askForAccessibilityOnLaunch, !HotkeyMonitor.accessibilityGranted() {
+            HotkeyMonitor.promptForAccessibility()
+        }
 
         let menuBar = MenuBarController(
             settings: settings,

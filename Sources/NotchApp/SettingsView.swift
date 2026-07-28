@@ -67,6 +67,12 @@ struct SettingsView: View {
 
             Section("Startup") {
                 Toggle("Launch at login", isOn: $settings.launchAtLogin)
+                Toggle(
+                    "Ask for Accessibility access at launch",
+                    isOn: $settings.askForAccessibilityOnLaunch)
+                Text("Accessibility access is only needed for global keyboard shortcuts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Updates") {

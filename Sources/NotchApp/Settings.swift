@@ -116,6 +116,7 @@ final class Settings {
     var customTerminalBundleID: String { didSet { defaults.set(customTerminalBundleID, forKey: Keys.customTerminalBundleID) } }
     var compactIndicatorMode: CompactIndicatorMode { didSet { defaults.set(compactIndicatorMode.rawValue, forKey: Keys.compactIndicatorMode) } }
     var launchAtLogin: Bool { didSet { defaults.set(launchAtLogin, forKey: Keys.launchAtLogin); LoginItem.setEnabled(launchAtLogin) } }
+    var askForAccessibilityOnLaunch: Bool { didSet { defaults.set(askForAccessibilityOnLaunch, forKey: Keys.askForAccessibilityOnLaunch) } }
     var automaticUpdateChecks: Bool { didSet { defaults.set(automaticUpdateChecks, forKey: Keys.automaticUpdateChecks) } }
     var lastUpdateCheckAt: Date? { didSet { defaults.set(lastUpdateCheckAt, forKey: Keys.lastUpdateCheckAt) } }
     var skippedUpdateVersion: String? { didSet { defaults.set(skippedUpdateVersion, forKey: Keys.skippedUpdateVersion) } }
@@ -140,6 +141,8 @@ final class Settings {
         compactIndicatorMode = CompactIndicatorMode(
             rawValue: defaults.string(forKey: Keys.compactIndicatorMode) ?? "") ?? .revealOnHover
         launchAtLogin = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
+        askForAccessibilityOnLaunch =
+            defaults.object(forKey: Keys.askForAccessibilityOnLaunch) as? Bool ?? true
         automaticUpdateChecks = defaults.object(forKey: Keys.automaticUpdateChecks) as? Bool ?? true
         lastUpdateCheckAt = defaults.object(forKey: Keys.lastUpdateCheckAt) as? Date
         skippedUpdateVersion = defaults.string(forKey: Keys.skippedUpdateVersion)
@@ -227,6 +230,7 @@ final class Settings {
         static let customTerminalBundleID = "customTerminalBundleID"
         static let compactIndicatorMode = "compactIndicatorMode"
         static let launchAtLogin = "launchAtLogin"
+        static let askForAccessibilityOnLaunch = "askForAccessibilityOnLaunch"
         static let automaticUpdateChecks = "automaticUpdateChecks"
         static let lastUpdateCheckAt = "lastUpdateCheckAt"
         static let skippedUpdateVersion = "skippedUpdateVersion"

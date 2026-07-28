@@ -148,8 +148,10 @@ a **Check Now** button. The check is a single unauthenticated GET to GitHub with
 no query parameters and no identifiers.
 
 On first launch, grant **Notch Agent** access in **System Settings → Privacy &
-Security → Accessibility**. This permission is required for global shortcuts and
-agent actions; if a stale denied entry exists, remove it with the − button first.
+Security → Accessibility** to use global shortcuts. If a stale denied entry
+exists, remove it with the − button first. To keep using Notch Agent without
+global shortcuts, turn off **Ask for Accessibility access at launch** under
+**Settings → Startup**.
 
 ## Build
 
