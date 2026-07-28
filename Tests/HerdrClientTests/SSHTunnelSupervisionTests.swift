@@ -21,7 +21,7 @@ struct SSHTunnelSupervisionTests {
         done
         remainder="${spec#*:}"
         local_port="${remainder%%:*}"
-        python3 -c "
+        exec python3 -c "
         import json, socket, sys
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -56,7 +56,7 @@ struct SSHTunnelSupervisionTests {
         done
         remainder="${spec#*:}"
         local_port="${remainder%%:*}"
-        python3 -c "
+        exec python3 -c "
         import json, socket, sys
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -79,7 +79,7 @@ struct SSHTunnelSupervisionTests {
         done
         remainder="${spec#*:}"
         local_port="${remainder%%:*}"
-        python3 -c "
+        exec python3 -c "
         import json, socket, sys, time
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -104,7 +104,7 @@ struct SSHTunnelSupervisionTests {
         done
         remainder="${spec#*:}"
         local_port="${remainder%%:*}"
-        python3 -c "
+        exec python3 -c "
         import socket, sys, time
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -164,7 +164,7 @@ struct SSHTunnelSupervisionTests {
             configuration: configuration(localPort: port),
             sshPath: script,
             backoff: BackoffPolicy(base: 60, max: 60),
-            readinessTimeout: 0.4)
+            readinessTimeout: 1)
         let recorder = StateRecorder()
         await tunnel.start { recorder.record($0) }
 
