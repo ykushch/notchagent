@@ -224,10 +224,29 @@ final class NotchViewModel {
 
     // MARK: Derived summary for the collapsed pill
 
+    private(set) var compactSignalTracker = CompactSignalTracker()
+
     /// Worst status across all agents in all sessions — drives the pill color.
     var overallStatus: RollupStatus {
         registry.runtimes.map(\.store.overallStatus)
             .max(by: { $0.precedence < $1.precedence }) ?? .unknown
+    }
+
+    /// Presentation-only signal state. A visual done signal may recede after a
+    /// minute while the store continues to expose `.done` until it is viewed.
+    var compactSignalSnapshot: CompactSignalSnapshot {
+        let status = overallStatus
+        let matchingCount = registry.runtimes.reduce(0) { total, runtime in
+            total + runtime.store.panes.keys.count {
+                runtime.store.derivedStatus(forPane: $0) == status
+            }
+        }
+        return CompactSignalSnapshot(
+            status: status,
+            count: matchingCount > 0 ? matchingCount : agentCount,
+            enteredAt: compactSignalTracker.status == status
+                ? compactSignalTracker.enteredAt : nil,
+            triggerRevision: compactSignalTracker.triggerRevision)
     }
 
     /// Count of agents needing attention (blocked) for the pill badge.
@@ -621,6 +640,13 @@ extension NotchViewModel: SessionRuntimeHost {
         _ runtime: SessionRuntime,
         didObserve transitions: SessionRuntime.Transitions
     ) async {
+        var signalTracker = compactSignalTracker
+        signalTracker.observe(
+            status: overallStatus,
+            newlyBlockedCount: transitions.newlyBlockedPaneIDs.count,
+            newlyFinishedCount: transitions.newlyFinishedPaneIDs.count,
+            at: Date())
+        compactSignalTracker = signalTracker
         for _ in transitions.newlyBlockedPaneIDs {
             soundEngine?.play(.blocked)
         }

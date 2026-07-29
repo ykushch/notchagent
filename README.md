@@ -28,11 +28,29 @@ an accelerator. The UI stays thin and every response remains explicitly user-dri
 - Supports display placement, global hotkeys, sounds, Do Not Disturb, and launch
   at login without adding a Dock icon.
 
+## Status colors
+
+NotchAgent uses one warm, terminal-dark palette throughout the notch. The
+indicator color always describes agent state; ordinary buttons and update
+notices deliberately avoid borrowing these colors.
+
+| Indicator | State | Meaning | Compact behavior |
+| --- | --- | --- | --- |
+| <img src="Docs/img/status-working.svg" width="14" height="14" alt="Blue indicator"> | `working` · `#60B0FF` | The agent is actively running. | Calm and static; never pulses. |
+| <img src="Docs/img/status-blocked.svg" width="14" height="14" alt="Coral indicator"> | `blocked` · `#FB8371` | The agent needs your input. | Pulses three times, then holds solid. |
+| <img src="Docs/img/status-done.svg" width="14" height="14" alt="Green indicator"> | `done` · `#5AC576` | The agent finished and its result is still unseen. | Shows green for 60 seconds, then visually recedes to idle; it remains semantically done until viewed. |
+| <img src="Docs/img/status-idle.svg" width="14" height="14" alt="Warm gray indicator"> | `idle` · `#74716C` | No agent work is active. | After 10 seconds, the line narrows and dims. |
+
+The line width represents how many agents contribute to the displayed state,
+up to five. Larger counts use the capped width and remain available in the
+revealed compact indicator. Primary text uses warm paper (`#F0EEE9`) over
+near-black surfaces rather than cool neutral gray.
+
 ## Screenshots
 
 | Minimal blocked indicator | Agent count on hover |
 | --- | --- |
-| <img src="Docs/img/01-blocked-state.png" alt="Minimal red blocked status line beneath the MacBook notch"> | <img src="Docs/img/02-blocked-state-hover.png" alt="Expanded compact indicator showing the herdr mark, blocked status, and one agent"> |
+| <img src="Docs/img/01-blocked-state.png" alt="Minimal coral blocked status line beneath the MacBook notch"> | <img src="Docs/img/02-blocked-state-hover.png" alt="Expanded compact indicator showing the herdr mark, blocked status, and one agent"> |
 
 ### See every agent at a glance
 

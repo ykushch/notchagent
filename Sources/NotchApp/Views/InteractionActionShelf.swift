@@ -87,7 +87,7 @@ struct InteractionActionShelf: View {
                     Label("Choose selected", systemImage: "checkmark")
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.green.opacity(0.78))
+                .tint(NotchPalette.action)
                 .help("Submit “\(interaction.choices[selected].label)”")
             }
             if display.showsExplicitSubmit {
@@ -97,7 +97,7 @@ struct InteractionActionShelf: View {
                     Label("Submit", systemImage: "checkmark")
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.green.opacity(0.78))
+                .tint(NotchPalette.action)
                 .help(interaction.kind == .reviewSubmit
                     ? "Submit these answers"
                     : "Review and submit the selected answers")
@@ -128,7 +128,7 @@ struct InteractionActionShelf: View {
 
             Text(compactProgress)
                 .font(.system(size: 9, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.58))
+                .foregroundStyle(NotchPalette.secondaryText)
                 .monospacedDigit()
                 .frame(minWidth: 38, minHeight: 22)
                 .accessibilityLabel(display.progressText ?? "Question navigation")
@@ -146,7 +146,7 @@ struct InteractionActionShelf: View {
             .help("Next question")
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.white.opacity(0.65))
+        .foregroundStyle(NotchPalette.secondaryText)
         .background(Capsule().fill(NotchPalette.elevated))
         .overlay(Capsule().stroke(NotchPalette.hairline, lineWidth: 1))
     }
@@ -170,7 +170,7 @@ struct InteractionActionShelf: View {
                 Label("Send", systemImage: "arrow.up")
             }
             .buttonStyle(.borderedProminent)
-            .tint(.cyan.opacity(0.82))
+            .tint(NotchPalette.action)
             .disabled(trimmedDraft.isEmpty || phase.isBusy)
 
             safetyIndicator
@@ -183,7 +183,7 @@ struct InteractionActionShelf: View {
         HStack(spacing: 7) {
             Label("Approval", systemImage: "shield.lefthalf.filled")
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.orange)
+                .foregroundStyle(NotchPalette.blocked)
             Spacer(minLength: 4)
             if interaction.capabilities.contains(.deny) {
                 Button("Deny") {
@@ -203,7 +203,7 @@ struct InteractionActionShelf: View {
                     model.respondToSelectedInteraction(.approve)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.green.opacity(0.78))
+                .tint(NotchPalette.action)
             }
             safetyIndicator
         }
@@ -299,7 +299,7 @@ private struct TerminalFallbackDisclosure: View {
                 if let warning {
                     Label(warning, systemImage: "exclamationmark.triangle.fill")
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(NotchPalette.blocked)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: 7) {
@@ -311,7 +311,7 @@ private struct TerminalFallbackDisclosure: View {
                         Label("Send", systemImage: "return")
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.cyan.opacity(0.82))
+                    .tint(NotchPalette.action)
                     Menu("More", systemImage: "keyboard") {
                         Button("Type Without Return", systemImage: "text.cursor") {
                             model.typeTextWithoutSubmitSelected()

@@ -26,7 +26,7 @@ struct ExpandedNotchSurface: View {
             }
         }
         .padding(.top, topInset > 0 ? topInset + 5 : 8)
-        .foregroundStyle(.white)
+        .foregroundStyle(NotchPalette.primaryText)
         .onPreferenceChange(NotchHeightPreferenceKey.self, perform: applyMeasuredHeights)
     }
 
@@ -79,11 +79,11 @@ private struct ExpandedNotchHeader: View {
             Button(action: model.collapse) {
                 Label("Hide", systemImage: "chevron.up")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .foregroundStyle(NotchPalette.primaryText)
                     .padding(.horizontal, 14)
                     .frame(minWidth: 76, minHeight: 30)
-                    .background(Capsule().fill(.white.opacity(0.16)))
-                    .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 1))
+                    .background(Capsule().fill(NotchPalette.selected))
+                    .overlay(Capsule().stroke(NotchPalette.hairline, lineWidth: 1))
                     .contentShape(Capsule())
             }
             .accessibilityLabel("Hide notch")
@@ -91,7 +91,7 @@ private struct ExpandedNotchHeader: View {
         }
         .font(.system(size: 11, weight: .semibold, design: .rounded))
         .buttonStyle(.plain)
-        .foregroundStyle(.white.opacity(0.72))
+        .foregroundStyle(NotchPalette.secondaryText)
         .padding(.horizontal, 16)
         .frame(height: 38)
     }
@@ -108,7 +108,7 @@ private struct NotchOverviewSurface: View {
                     StatusBanner(
                         text: "herdr isn't reachable. Is the server running?",
                         systemImage: "exclamationmark.triangle.fill",
-                        color: .orange)
+                        color: NotchPalette.critical)
                 }
                 if let notice = model.jumpNotice {
                     JumpNoticeBanner(model: model, notice: notice)
@@ -129,7 +129,7 @@ private struct NotchOverviewSurface: View {
                     StatusBanner(
                         text: "Global hotkeys need Accessibility permission.",
                         systemImage: "keyboard.badge.ellipsis",
-                        color: .orange)
+                        color: NotchPalette.critical)
                 }
                 if let advice = model.updateAdvice {
                     UpdateNoticeBanner(model: model, advice: advice)
@@ -208,11 +208,11 @@ private struct FocusedSessionHeader: View {
                 Text(elapsed).monospacedDigit()
             }
             if let freshness = item.freshnessText {
-                Text(freshness).foregroundStyle(.cyan.opacity(0.62))
+                Text(freshness).foregroundStyle(NotchPalette.tertiaryText)
             }
             AgentModeControl(model: model)
             Button("Jump") { model.jump(item.ref) }
-                .foregroundStyle(.cyan)
+                .foregroundStyle(NotchPalette.action)
         }
         .font(.system(size: 9, weight: .medium))
         .buttonStyle(.plain)
@@ -229,7 +229,7 @@ private struct AgentModeControl: View {
                     model.selectedAgentMode.map { "Mode: \($0.displayName)" } ?? "Mode",
                     systemImage: "arrow.triangle.2.circlepath")
             }
-            .foregroundStyle(.purple.opacity(0.92))
+            .foregroundStyle(NotchPalette.secondaryText)
             .disabled(!model.canCycleSelectedAgentMode)
             .help("Cycle agent mode (Shift-Tab)")
             .accessibilityLabel("Cycle agent mode")
@@ -262,10 +262,13 @@ private struct FocusedInteractionContent: View {
                 } else {
                     Text("No structured prompt was detected. Manual controls remain available.")
                         .font(.system(size: 10))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(NotchPalette.critical)
                 }
                 if let error = state.error {
-                    StatusBanner(text: error, systemImage: "exclamationmark.circle", color: .red)
+                    StatusBanner(
+                        text: error,
+                        systemImage: "exclamationmark.circle",
+                        color: NotchPalette.critical)
                 }
             } else {
                 Text(item.status == .done ? item.summary : idleMessage(item.status))
@@ -301,11 +304,13 @@ private struct StaleDraftBanner: View {
                 Button("Discard", action: model.discardSelectedDraft)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.cyan)
+            .foregroundStyle(NotchPalette.action)
         }
         .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(.orange.opacity(0.16)))
-        .foregroundStyle(.orange)
+        .background(RoundedRectangle(cornerRadius: 8).fill(NotchPalette.elevated))
+        .overlay(RoundedRectangle(cornerRadius: 8)
+            .stroke(NotchPalette.blocked.opacity(0.42), lineWidth: 1))
+        .foregroundStyle(NotchPalette.blocked)
     }
 }
 
@@ -350,7 +355,9 @@ private struct UpdateNoticeBanner: View {
         .buttonStyle(.plain)
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 9).fill(NotchPalette.updateAccent.opacity(0.13)))
+        .background(RoundedRectangle(cornerRadius: 9).fill(NotchPalette.elevated))
+        .overlay(RoundedRectangle(cornerRadius: 9)
+            .stroke(NotchPalette.hairline, lineWidth: 1))
     }
 }
 
@@ -366,7 +373,9 @@ private struct StatusBanner: View {
             .fixedSize(horizontal: false, vertical: true)
             .padding(9)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 9).fill(color.opacity(0.13)))
+            .background(RoundedRectangle(cornerRadius: 9).fill(NotchPalette.elevated))
+            .overlay(RoundedRectangle(cornerRadius: 9)
+                .stroke(color.opacity(0.42), lineWidth: 1))
     }
 }
 
@@ -382,7 +391,7 @@ private struct JumpNoticeBanner: View {
             Spacer(minLength: 4)
             if notice.attachCommand != nil {
                 Button("Copy attach command", action: model.copyJumpAttachCommand)
-                    .foregroundStyle(.cyan)
+                    .foregroundStyle(NotchPalette.action)
             }
             Button(action: model.dismissJumpNotice) {
                 Image(systemName: "xmark")
@@ -391,9 +400,11 @@ private struct JumpNoticeBanner: View {
         }
         .font(.system(size: 10, weight: .medium))
         .buttonStyle(.plain)
-        .foregroundStyle(.orange)
+        .foregroundStyle(NotchPalette.blocked)
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 9).fill(.orange.opacity(0.13)))
+        .background(RoundedRectangle(cornerRadius: 9).fill(NotchPalette.elevated))
+        .overlay(RoundedRectangle(cornerRadius: 9)
+            .stroke(NotchPalette.blocked.opacity(0.42), lineWidth: 1))
     }
 }

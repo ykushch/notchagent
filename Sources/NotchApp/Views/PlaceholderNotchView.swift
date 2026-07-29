@@ -25,7 +25,7 @@ struct PlaceholderNotchView: View {
     var body: some View {
         ZStack(alignment: .top) {
             shellShape
-                .fill(NotchPalette.surface)
+                .fill(isCompact ? NotchPalette.notchVoid : NotchPalette.surface)
                 .overlay(shellShape.stroke(NotchPalette.hairline, lineWidth: 1))
 
             CompactNotchSummary(
@@ -56,7 +56,8 @@ struct PlaceholderNotchView: View {
         .clipShape(shellShape)
         .contentShape(shellShape)
         .shadow(
-            color: surface.presentation.isExpanded ? .black.opacity(0.48) : .clear,
+            color: surface.presentation.isExpanded
+                ? NotchPalette.notchVoid.opacity(0.48) : .clear,
             radius: 20,
             y: 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -74,50 +75,51 @@ private struct CompactNotchSummary: View {
 
     var body: some View {
         Button(action: model.toggle) {
-            VStack(spacing: 0) {
-                Spacer(minLength: topInset)
-                if surface.isCompactIndicatorRevealed {
-                    HStack(spacing: 5) {
-                        HerdrBrandMark()
-                            .frame(width: 9, height: 9)
-                            .foregroundStyle(.white.opacity(0.62))
-                        Circle()
-                            .fill(NotchPalette.status(model.overallStatus))
-                            .frame(width: 5, height: 5)
-                        Text(model.attentionCount > 0
-                            ? "\(model.attentionCount)"
-                            : "\(model.agentCount)")
-                            .font(.system(size: 8, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.82))
-                            .monospacedDigit()
-                        if pendingUpdateVersion != nil {
-                            Image(systemName: "arrow.down.circle.fill")
-                                .font(.system(size: 8))
-                                .foregroundStyle(NotchPalette.updateAccent)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let snapshot = model.compactSignalSnapshot
+                let style = CompactSignalStyle.resolve(snapshot, at: context.date)
+                VStack(spacing: 0) {
+                    Spacer(minLength: topInset)
+                    if surface.isCompactIndicatorRevealed {
+                        HStack(spacing: 5) {
+                            HerdrBrandMark()
+                                .frame(width: 9, height: 9)
+                                .foregroundStyle(NotchPalette.primaryText.opacity(0.68))
+                            Circle()
+                                .fill(NotchPalette.status(style.visualStatus))
+                                .frame(width: 5, height: 5)
+                            Text("\(snapshot.count)")
+                                .font(.system(size: 8, weight: .semibold, design: .rounded))
+                                .foregroundStyle(NotchPalette.primaryText.opacity(0.86))
+                                .monospacedDigit()
+                            if pendingUpdateVersion != nil {
+                                Image(systemName: "arrow.down.circle.fill")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(NotchPalette.updateAccent)
+                            }
                         }
-                    }
-                    .frame(maxHeight: .infinity, alignment: .center)
-                    .padding(.horizontal, 8)
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                } else {
-                    // Total width stays 34pt either way, so the compact panel
-                    // never resizes just because an update landed. The status
-                    // color is never replaced — an update must not be mistaken
-                    // for an agent that needs attention.
-                    HStack(spacing: 4) {
-                        Capsule()
-                            .fill(NotchPalette.status(model.overallStatus))
-                            .frame(width: pendingUpdateVersion == nil ? 34 : 26, height: 3)
-                        if pendingUpdateVersion != nil {
-                            Capsule()
-                                .fill(NotchPalette.updateAccent)
-                                .frame(width: 4, height: 3)
+                        .frame(maxHeight: .infinity, alignment: .center)
+                        .padding(.horizontal, 8)
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    } else {
+                        // Status and update stay separate signals. The status bar
+                        // uses width for count; the update remains a small paper tick.
+                        HStack(spacing: 4) {
+                            CompactStatusBar(
+                                snapshot: snapshot,
+                                style: style,
+                                reduceMotion: surface.reduceMotion)
+                            if pendingUpdateVersion != nil {
+                                Capsule()
+                                    .fill(NotchPalette.updateAccent)
+                                    .frame(width: 4, height: 3)
+                            }
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(helpText)
@@ -157,29 +159,5 @@ struct NotchSurfaceShape: Shape {
                 topTrailing: topRadius),
             style: .continuous)
             .path(in: rect)
-    }
-}
-
-enum NotchPalette {
-    static let surface = Color(red: 0.025, green: 0.027, blue: 0.038)
-    static let elevated = Color.white.opacity(0.065)
-    static let hover = Color.white.opacity(0.105)
-    static let selected = Color.white.opacity(0.14)
-    static let hairline = Color.white.opacity(0.11)
-    static let secondaryText = Color.white.opacity(0.54)
-    static let tertiaryText = Color.white.opacity(0.34)
-    /// Deliberately outside the `RollupStatus` palette below and the action
-    /// colors used elsewhere (cyan for jump, purple for mode), so an available
-    /// update reads as information rather than as something demanding a reply.
-    static let updateAccent = Color(red: 0.62, green: 0.66, blue: 0.98)
-
-    static func status(_ status: RollupStatus) -> Color {
-        switch status {
-        case .blocked: .red
-        case .working: .orange
-        case .done: .green
-        case .idle: .blue
-        case .unknown: .gray
-        }
     }
 }

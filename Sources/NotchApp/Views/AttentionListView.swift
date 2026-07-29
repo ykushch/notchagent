@@ -17,17 +17,17 @@ struct AttentionListView: View {
                         .accessibilityHint("Show this agent's pending interaction")
                     Button("Jump") { jump(item.ref) }
                         .buttonStyle(.plain).font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.cyan).padding(.horizontal, 6)
+                        .foregroundStyle(NotchPalette.action).padding(.horizontal, 6)
                         .accessibilityLabel(
                             "Jump to \(item.agentName) in \(item.workspaceLabel), \(item.tabTitle)")
                 }
                 .padding(6)
                 .background(RoundedRectangle(cornerRadius: 9).fill(
-                    item.isSelected ? .white.opacity(0.14)
+                    item.isSelected ? NotchPalette.selected
                         : hoveredRef == item.ref
-                            ? .white.opacity(0.10) : .white.opacity(0.055)))
+                            ? NotchPalette.hover : NotchPalette.elevated))
                 .overlay(RoundedRectangle(cornerRadius: 9).stroke(
-                    hoveredRef == item.ref ? .white.opacity(0.10) : .clear))
+                    hoveredRef == item.ref ? NotchPalette.hairline : .clear))
                 .onHover { hovering in
                     hoveredRef = hovering ? item.ref
                         : hoveredRef == item.ref ? nil : hoveredRef
@@ -38,10 +38,12 @@ struct AttentionListView: View {
 
     private func row(_ item: InteractionAttentionDisplayModel) -> some View {
         HStack(spacing: 8) {
-            Circle().fill(color(item.status)).frame(width: 8, height: 8)
+            Circle().fill(NotchPalette.status(item.status)).frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
-                    Text(item.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
+                    Text(item.title)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(NotchPalette.primaryText)
                     Spacer()
                     // Only set when more than one session is tracked — otherwise
                     // every row would carry the same redundant badge.
@@ -53,29 +55,32 @@ struct AttentionListView: View {
                         }
                         .labelStyle(.titleAndIcon)
                         .font(.system(size: 7, weight: .bold, design: .rounded))
-                        .foregroundStyle(.orange.opacity(0.95))
+                        .foregroundStyle(NotchPalette.secondaryText)
                         .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(Capsule().fill(.orange.opacity(0.14)))
+                        .background(Capsule().fill(NotchPalette.hover))
                     }
                     Text(item.agentName.uppercased())
                         .font(.system(size: 7, weight: .bold, design: .rounded))
-                        .foregroundStyle(.cyan.opacity(0.9))
+                        .foregroundStyle(NotchPalette.primaryText.opacity(0.9))
                         .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(Capsule().fill(.cyan.opacity(0.12)))
+                        .background(Capsule().fill(NotchPalette.selected))
                     if let modelName = item.modelName {
                         Text(modelName)
                             .font(.system(size: 7, weight: .bold, design: .rounded))
-                            .foregroundStyle(.purple.opacity(0.95)).lineLimit(1)
+                            .foregroundStyle(NotchPalette.secondaryText).lineLimit(1)
                             .padding(.horizontal, 5).padding(.vertical, 2)
-                            .background(Capsule().fill(.purple.opacity(0.14)))
+                            .background(Capsule().fill(NotchPalette.hover))
                     }
                 }
                 HStack {
-                    Text(item.summary).font(.system(size: 9)).foregroundStyle(.white.opacity(0.55))
+                    Text(item.summary)
+                        .font(.system(size: 9))
+                        .foregroundStyle(NotchPalette.secondaryText)
                         .lineLimit(1)
                     Spacer()
                     Text(item.stateText).font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(item.status == .blocked ? .red : .white.opacity(0.45))
+                        .foregroundStyle(item.status == .blocked
+                            ? NotchPalette.blocked : NotchPalette.tertiaryText)
                 }
                 HStack(spacing: 6) {
                     Text(item.tabTitle).lineLimit(1)
@@ -87,19 +92,10 @@ struct AttentionListView: View {
                         Text(freshness)
                     }
                 }
-                .font(.system(size: 8)).foregroundStyle(.white.opacity(0.32))
+                .font(.system(size: 8))
+                .foregroundStyle(NotchPalette.tertiaryText)
                 .monospacedDigit()
             }
         }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-    }
-
-    private func color(_ status: RollupStatus) -> Color {
-        switch status {
-        case .blocked: .red
-        case .working: .orange
-        case .done: .green
-        case .idle: .blue
-        case .unknown: .gray
-        }
     }
 }

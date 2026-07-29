@@ -49,11 +49,12 @@ struct InteractionDetailView: View {
             progressHeader
             if let title = display.title {
                 Text(title).font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white).fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(NotchPalette.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let context = display.userContextLine {
                 Text(context).font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.cyan.opacity(0.72)).lineLimit(2)
+                    .foregroundStyle(NotchPalette.secondaryText).lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel(context)
             }
@@ -61,7 +62,7 @@ struct InteractionDetailView: View {
             if interaction.contentEvidence == nil,
                let body = display.body, !body.isEmpty {
                 Text(body).font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.7)).textSelection(.enabled)
+                    .foregroundStyle(NotchPalette.secondaryText).textSelection(.enabled)
                     .lineLimit(8).fixedSize(horizontal: false, vertical: true)
             }
             ForEach(display.choices, id: \.index) { choice in
@@ -72,13 +73,13 @@ struct InteractionDetailView: View {
         .background {
             if interaction.kind == .approval {
                 RoundedRectangle(cornerRadius: 11)
-                    .fill(Color.orange.opacity(0.11))
+                    .fill(NotchPalette.elevated)
             }
         }
         .overlay {
             if interaction.kind == .approval {
                 RoundedRectangle(cornerRadius: 11)
-                    .stroke(Color.orange.opacity(0.38), lineWidth: 1)
+                    .stroke(NotchPalette.blocked.opacity(0.42), lineWidth: 1)
             }
         }
     }
@@ -103,7 +104,7 @@ struct InteractionDetailView: View {
                 if let environment = evidence.environment {
                     Text(environment.uppercased())
                         .font(.system(size: 8, weight: .bold, design: .rounded))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(NotchPalette.blocked)
                 }
                 Button {
                     NSPasteboard.general.clearContents()
@@ -116,17 +117,18 @@ struct InteractionDetailView: View {
             }
             Text(evidence.command)
                 .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.white).textSelection(.enabled)
+                .foregroundStyle(NotchPalette.primaryText).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             if let reason = evidence.reason {
                 Text(reason).font(.system(size: 9))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(NotchPalette.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(8).foregroundStyle(.white.opacity(0.75))
-        .background(RoundedRectangle(cornerRadius: 8).fill(.black.opacity(0.35)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.orange.opacity(0.28)))
+        .padding(8).foregroundStyle(NotchPalette.secondaryText)
+        .background(RoundedRectangle(cornerRadius: 8).fill(NotchPalette.elevated))
+        .overlay(RoundedRectangle(cornerRadius: 8)
+            .stroke(NotchPalette.blocked.opacity(0.32)))
     }
 
     private func diffCard(_ evidence: InteractionDiffEvidence) -> some View {
@@ -136,8 +138,8 @@ struct InteractionDetailView: View {
                     .font(.system(size: 9, weight: .semibold)).lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
-                Text("+\(evidence.additions)").foregroundStyle(.green)
-                Text("−\(evidence.removals)").foregroundStyle(.red)
+                Text("+\(evidence.additions)").foregroundStyle(NotchPalette.done)
+                Text("−\(evidence.removals)").foregroundStyle(NotchPalette.blocked)
             }
             .font(.system(size: 8, weight: .bold, design: .monospaced))
             .padding(8)
@@ -145,10 +147,10 @@ struct InteractionDetailView: View {
                 HStack(alignment: .top, spacing: 6) {
                     Text(line.lineNumber.map(String.init) ?? "")
                         .frame(width: 20, alignment: .trailing)
-                        .foregroundStyle(.white.opacity(0.32))
+                        .foregroundStyle(NotchPalette.tertiaryText)
                     Text(diffMarker(line.kind)).frame(width: 7)
                         .foregroundStyle(diffForeground(line.kind))
-                    Text(line.text).foregroundStyle(.white.opacity(0.86))
+                    Text(line.text).foregroundStyle(NotchPalette.primaryText.opacity(0.86))
                     Spacer(minLength: 0)
                 }
                 .font(.system(size: 9, design: .monospaced))
@@ -156,9 +158,9 @@ struct InteractionDetailView: View {
                 .background(diffBackground(line.kind))
             }
         }
-        .background(RoundedRectangle(cornerRadius: 8).fill(.black.opacity(0.35)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(NotchPalette.elevated))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(NotchPalette.hairline))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Proposed changes to \(evidence.filePath), \(evidence.additions) additions, \(evidence.removals) removals")
     }
@@ -168,11 +170,19 @@ struct InteractionDetailView: View {
     }
 
     private func diffForeground(_ kind: InteractionDiffLineKind) -> Color {
-        switch kind { case .context: .white.opacity(0.5); case .removal: .red; case .addition: .green }
+        switch kind {
+        case .context: NotchPalette.secondaryText
+        case .removal: NotchPalette.blocked
+        case .addition: NotchPalette.done
+        }
     }
 
     private func diffBackground(_ kind: InteractionDiffLineKind) -> Color {
-        switch kind { case .context: .clear; case .removal: .red.opacity(0.12); case .addition: .green.opacity(0.12) }
+        switch kind {
+        case .context: .clear
+        case .removal: NotchPalette.blocked.opacity(0.12)
+        case .addition: NotchPalette.done.opacity(0.12)
+        }
     }
 
     @ViewBuilder private var progressHeader: some View {
@@ -181,7 +191,7 @@ struct InteractionDetailView: View {
                 if let progress = display.progressText {
                     Text(progress)
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.cyan.opacity(0.82))
+                        .foregroundStyle(NotchPalette.primaryText)
                         .monospacedDigit()
                 }
                 Spacer(minLength: 4)
@@ -207,9 +217,9 @@ struct InteractionDetailView: View {
     }
 
     private func stepColor(_ step: InteractionStep, at index: Int) -> Color {
-        if index == interaction.presentation.activeStepIndex { return .cyan }
-        if step.isAnswered { return .green.opacity(0.78) }
-        return .white.opacity(0.22)
+        if index == interaction.presentation.activeStepIndex { return NotchPalette.primaryText }
+        if step.isAnswered { return NotchPalette.done.opacity(0.78) }
+        return NotchPalette.disabledText
     }
 
     @ViewBuilder private func choiceRow(_ choice: InteractionDisplayChoice) -> some View {
@@ -238,14 +248,16 @@ struct InteractionDetailView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 7) {
                 Text("\(choice.index + 1).").font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(choice.isSelected ? .green : .white.opacity(0.65))
+                    .foregroundStyle(choice.isSelected
+                        ? NotchPalette.done : NotchPalette.secondaryText)
                 if let checked = choice.isChecked {
                     Image(systemName: checked ? "checkmark.square.fill" : "square")
-                        .foregroundStyle(checked ? .green : .white.opacity(0.4))
+                        .foregroundStyle(checked
+                            ? NotchPalette.done : NotchPalette.disabledText)
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(choice.label).font(.system(size: 11, weight: choice.isSelected ? .semibold : .regular))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(NotchPalette.primaryText)
                         .fixedSize(horizontal: false, vertical: true)
                         .layoutPriority(1)
                     if let description = choice.description {
@@ -257,41 +269,41 @@ struct InteractionDetailView: View {
                 Spacer(minLength: 0)
                 if display.choicesAreActionable,
                    display.selectedChoicePreview != nil {
-                    Label(choice.isSelected ? "Selected" : "Preview",
-                          systemImage: choice.isSelected ? "checkmark" : "eye")
+                        Label(choice.isSelected ? "Selected" : "Preview",
+                              systemImage: choice.isSelected ? "checkmark" : "eye")
                         .font(.system(size: 9, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.42))
+                        .foregroundStyle(NotchPalette.tertiaryText)
                         .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(Capsule().fill(.white.opacity(0.08)))
+                        .background(Capsule().fill(NotchPalette.hover))
                         .fixedSize()
                 } else if display.choicesAreActionable, choice.index < 9 {
                     Text("\(hotkeySymbols)\(choice.index + 1)")
                         .font(.system(size: 9, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.42))
+                        .foregroundStyle(NotchPalette.tertiaryText)
                         .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(Capsule().fill(.white.opacity(0.08)))
+                        .background(Capsule().fill(NotchPalette.hover))
                         .fixedSize()
                 }
             }
             if choice.isSelected,
                let preview = display.selectedChoicePreview,
                !preview.isEmpty {
-                Divider().overlay(.white.opacity(0.1)).padding(.vertical, 7)
+                Divider().overlay(NotchPalette.hairline).padding(.vertical, 7)
                 Text(preview)
                     .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.62))
+                    .foregroundStyle(NotchPalette.secondaryText)
                     .textSelection(.disabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(8).frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 8).fill(
-            choice.isChecked == true ? Color.green.opacity(0.18)
+            choice.isChecked == true ? NotchPalette.done.opacity(0.18)
                 : choice.isSelected ? NotchPalette.selected
                 : hoveredChoiceIndex == choice.index ? NotchPalette.hover
                 : NotchPalette.elevated))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(
-            choice.isSelected ? .green.opacity(0.6) : .clear))
+            choice.isSelected ? NotchPalette.done.opacity(0.6) : .clear))
         .onHover { hovering in
             hoveredChoiceIndex = hovering ? choice.index
                 : hoveredChoiceIndex == choice.index ? nil : hoveredChoiceIndex
@@ -307,7 +319,7 @@ struct InteractionDetailView: View {
             .font(.system(
                 size: 9,
                 design: description.contains("\n") ? .monospaced : .default))
-            .foregroundStyle(.white.opacity(0.58))
+            .foregroundStyle(NotchPalette.secondaryText)
             .fixedSize(horizontal: false, vertical: true)
             .layoutPriority(1)
         if display.choicesAreActionable {
@@ -326,7 +338,7 @@ struct InteractionDetailView: View {
                 .onSubmit { submitText(intent) }.disabled(phase.isBusy)
             Button("Submit") { submitText(intent) }
                 .buttonStyle(.borderedProminent)
-                .tint(.cyan.opacity(0.82))
+                .tint(NotchPalette.action)
                 .controlSize(.small)
                 .disabled(draftText.isEmpty || phase.isBusy)
         }
