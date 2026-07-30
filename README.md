@@ -36,7 +36,7 @@ notices deliberately avoid borrowing these colors.
 
 | Indicator | State | Meaning | Compact behavior |
 | --- | --- | --- | --- |
-| <img src="Docs/img/status-working.svg" width="14" height="14" alt="Blue indicator"> | `working` · `#60B0FF` | The agent is actively running. | Calm and static; never pulses. |
+| <img src="Docs/img/status-working.svg" width="14" height="14" alt="Amber indicator"> | `working` · `#D6A20A` | The agent is actively running. | Calm and static; never pulses. |
 | <img src="Docs/img/status-blocked.svg" width="14" height="14" alt="Coral indicator"> | `blocked` · `#FB8371` | The agent needs your input. | Pulses three times, then holds solid. |
 | <img src="Docs/img/status-done.svg" width="14" height="14" alt="Green indicator"> | `done` · `#5AC576` | The agent finished and its result is still unseen. | Shows green for 60 seconds, then visually recedes to idle; it remains semantically done until viewed. |
 | <img src="Docs/img/status-idle.svg" width="14" height="14" alt="Warm gray indicator"> | `idle` · `#74716C` | No agent work is active. | After 10 seconds, the line narrows and dims. |

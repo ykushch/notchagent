@@ -106,7 +106,7 @@ struct CompactStatusSignalTests {
 
     @Test("semantic status colors match the committed palette")
     func statusPalette() throws {
-        #expect(try hex(NotchPalette.status(.working)) == 0x60B0FF)
+        #expect(try hex(NotchPalette.status(.working)) == 0xD6A20A)
         #expect(try hex(NotchPalette.status(.blocked)) == 0xFB8371)
         #expect(try hex(NotchPalette.status(.done)) == 0x5AC576)
         #expect(try hex(NotchPalette.status(.idle)) == 0x74716C)

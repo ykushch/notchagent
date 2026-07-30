@@ -208,6 +208,9 @@ public struct InteractionAttentionDisplayModel: Identifiable, Sendable, Equatabl
         } else if status == .blocked {
             stateText = "needs input"
             summary = "Reading the live prompt…"
+        } else if status == .working {
+            stateText = "working"
+            summary = "Agent is working — no input needed."
         } else {
             stateText = status.rawValue
             summary = "No pending interaction."

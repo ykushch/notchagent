@@ -378,6 +378,8 @@ struct InteractionDisplayModelTests {
             paneID: "w1:p3", taskTitle: "Background work", agentName: "claude",
             workspaceLabel: "project", status: .working, state: nil,
             isSelected: false)
+        #expect(working.stateText == "working")
+        #expect(working.summary == "Agent is working — no input needed.")
         #expect(AttentionRollupDisplay.pillTaskTitle(
             items: [working], selected: working.ref) == nil)
         let finished = InteractionAttentionDisplayModel(

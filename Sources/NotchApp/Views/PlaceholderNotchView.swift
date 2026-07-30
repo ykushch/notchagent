@@ -132,7 +132,11 @@ private struct CompactNotchSummary: View {
     }
 
     private var accessibilityText: String {
-        let base = "\(model.agentCount) agents, \(model.attentionCount) need input"
+        let base = [
+            "\(model.agentCount) agents",
+            "overall status \(model.overallStatus.rawValue)",
+            "\(model.attentionCount) need input",
+        ].joined(separator: ", ")
         guard let version = pendingUpdateVersion else { return base }
         return "\(base). NotchAgent \(version) is available"
     }

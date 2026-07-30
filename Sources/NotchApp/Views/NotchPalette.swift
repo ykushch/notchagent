@@ -33,8 +33,8 @@ enum NotchPalette {
 
     // MARK: Status
 
-    /// Source: oklch(.74 .15 250), chroma-reduced to the sRGB boundary.
-    static let working = srgb(0x60B0FF)
+    /// Source: oklch(.74 .15 85).
+    static let working = srgb(0xD6A20A)
     /// Source: oklch(.74 .15 30).
     static let blocked = srgb(0xFB8371)
     /// Source: oklch(.74 .15 150).
