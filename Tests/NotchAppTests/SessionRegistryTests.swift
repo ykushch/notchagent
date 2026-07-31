@@ -86,7 +86,7 @@ private func discoveryDirectory(
 
 @MainActor
 private final class SubscriptionPolicyHost: SessionRuntimeHost {
-    var isNotchExpanded = false
+    var hasVisibleLiveSurface = false
     var preservesResolvedSelection = false
     var foregroundSessionID: String?
 
@@ -341,6 +341,23 @@ struct SessionRegistryTests {
 
         for runtime in model.registry.runtimes {
             #expect(model.isVisibleSession(runtime))
+            #expect(!model.usesPerPaneStatusSubscriptions(runtime))
+        }
+    }
+
+    @Test("screen save keeps every session on the visible polling cadence")
+    func screenSavePollingPolicy() {
+        let model = NotchViewModel()
+        model.registry.apply([local("default"), local("work")])
+        #expect(!model.hasVisibleLiveSurface)
+
+        model.setScreenSaveVisible(true)
+
+        #expect(model.hasVisibleLiveSurface)
+        for runtime in model.registry.runtimes {
+            #expect(model.isVisibleSession(runtime))
+            // A read-only ambient board does not justify herdr's expensive
+            // ten-times-per-second per-pane subscriptions.
             #expect(!model.usesPerPaneStatusSubscriptions(runtime))
         }
     }

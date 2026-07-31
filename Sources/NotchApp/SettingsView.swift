@@ -6,6 +6,7 @@ struct SettingsView: View {
     @Bindable var updates: UpdateChecker
     let onSessionChange: () -> Void
     let onRemoteHostsChange: () -> Void
+    let onPreviewScreenSave: () -> Void
     let availableSessions: [String]
     /// Live registry, so each row can show what the session is actually doing
     /// rather than just what was configured.
@@ -14,6 +15,7 @@ struct SettingsView: View {
     @State private var newRemoteTarget = ""
     @State private var newRemoteSession = ""
     @State private var discoveredSessions: [String]?
+    @State private var screenSaverInstaller = ScreenSaverInstaller()
 
     var body: some View {
         Form {
@@ -51,6 +53,10 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            ScreenSaverSettingsSection(
+                installer: screenSaverInstaller,
+                onPreview: onPreviewScreenSave)
 
             Section("Jump") {
                 Picker("Terminal app", selection: $settings.preferredTerminal) {
@@ -92,6 +98,7 @@ struct SettingsView: View {
         .padding()
         .frame(width: 500, height: 740)
         .task {
+            screenSaverInstaller.refresh()
             // Present Settings immediately, then ask the CLI off the main actor.
             // A failed lookup leaves the cached registry-derived list in place.
             if let sessions = await Self.discoverLocalSessionNames() {
@@ -117,6 +124,32 @@ struct SettingsView: View {
             "Follows the display with keyboard focus. Display changes settle for a moment before the pill moves."
         case .terminalDisplay:
             "Uses the display containing the preferred terminal, falling back to the active display."
+        }
+    }
+}
+
+private struct ScreenSaverSettingsSection: View {
+    @Bindable var installer: ScreenSaverInstaller
+    let onPreview: () -> Void
+
+    var body: some View {
+        Section("Screen Saver") {
+            LabeledContent("Notch Agent", value: installer.state.statusText)
+            HStack {
+                Button("Preview", action: onPreview)
+                Button(installer.state.actionTitle, action: installer.install)
+                    .disabled(installer.state == .sourceUnavailable)
+                Spacer()
+                Button("Open Screen Saver Settings…", action: installer.openSystemSettings)
+            }
+            Text("The standard saver shows live status only; prompts, terminal output, and response controls stay in NotchAgent. Keep NotchAgent running for live updates.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let message = installer.message {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }

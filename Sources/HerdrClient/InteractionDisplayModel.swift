@@ -139,6 +139,7 @@ public struct InteractionAttentionDisplayModel: Identifiable, Sendable, Equatabl
     public let status: RollupStatus
     public let stateText: String
     public let summary: String
+    public let activeSince: Date?
     public let elapsedText: String?
     public let freshnessText: String?
     public let isSelected: Bool
@@ -176,6 +177,7 @@ public struct InteractionAttentionDisplayModel: Identifiable, Sendable, Equatabl
         self.tabTitle = tabTitle
         self.status = status
         self.isSelected = isSelected
+        self.activeSince = activeSince
         elapsedText = activeSince.map { "\(Self.duration(from: $0, to: now)) elapsed" }
         freshnessText = state?.lastReadAt.map {
             let seconds = max(0, now.timeIntervalSince($0))

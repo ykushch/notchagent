@@ -10,6 +10,7 @@ final class MenuBarController: NSObject {
     private let onSessionChange: () -> Void
     private let onRemoteHostsChange: () -> Void
     private let onToggleNotch: () -> Void
+    private let onStartScreenSave: () -> Void
     /// Live session state, so Settings can show what each session is doing.
     private weak var registry: SessionRegistry?
 
@@ -19,7 +20,8 @@ final class MenuBarController: NSObject {
         registry: SessionRegistry?,
         onSessionChange: @escaping () -> Void,
         onRemoteHostsChange: @escaping () -> Void,
-        onToggleNotch: @escaping () -> Void
+        onToggleNotch: @escaping () -> Void,
+        onStartScreenSave: @escaping () -> Void
     ) {
         self.settings = settings
         self.updates = updates
@@ -27,6 +29,7 @@ final class MenuBarController: NSObject {
         self.onSessionChange = onSessionChange
         self.onRemoteHostsChange = onRemoteHostsChange
         self.onToggleNotch = onToggleNotch
+        self.onStartScreenSave = onStartScreenSave
     }
 
     func install() {
@@ -85,6 +88,9 @@ final class MenuBarController: NSObject {
 
         let toggle = NSMenuItem(title: "Show / Hide Notch", action: #selector(toggleNotch), keyEquivalent: "")
         toggle.target = self; menu.addItem(toggle)
+        let screenSave = NSMenuItem(
+            title: "Start Screen Save", action: #selector(startScreenSave), keyEquivalent: "")
+        screenSave.target = self; menu.addItem(screenSave)
         menu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self; menu.addItem(settingsItem)
@@ -132,6 +138,8 @@ final class MenuBarController: NSObject {
 
     @objc private func toggleNotch() { onToggleNotch() }
 
+    @objc private func startScreenSave() { onStartScreenSave() }
+
     @objc private func checkForUpdates() { updates.checkNow() }
 
     @objc private func skipUpdate() { updates.skipPendingUpdate() }
@@ -165,6 +173,7 @@ final class MenuBarController: NSObject {
             updates: updates,
             onSessionChange: onSessionChange,
             onRemoteHostsChange: onRemoteHostsChange,
+            onPreviewScreenSave: onStartScreenSave,
             availableSessions: registry?.runtimes
                 .filter { !$0.descriptor.isRemote && !$0.descriptor.isDefault }
                 .map(\.descriptor.kind.name)

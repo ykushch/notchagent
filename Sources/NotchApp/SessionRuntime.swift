@@ -11,8 +11,8 @@ import Observation
 /// the single owner that can see all sessions at once.
 @MainActor
 protocol SessionRuntimeHost: AnyObject {
-    /// Drives the poll cadence (an expanded notch polls faster).
-    var isNotchExpanded: Bool { get }
+    /// Drives the poll cadence whenever a status surface is prominently visible.
+    var hasVisibleLiveSurface: Bool { get }
     /// Whether this session is represented by the expanded UI and deserves the
     /// responsive snapshot cadence.
     func isVisibleSession(_ runtime: SessionRuntime) -> Bool
@@ -148,7 +148,7 @@ final class SessionRuntime {
             while !Task.isCancelled {
                 await self.pollOnce()
                 let cadence = SnapshotPollingPolicy.nanoseconds(
-                    isExpanded: self.host?.isNotchExpanded ?? false,
+                    isExpanded: self.host?.hasVisibleLiveSurface ?? false,
                     hasBlockedPanes: self.blockedPaneCount > 0,
                     hasWorkingPanes: self.hasWorkingPanes,
                     isUnavailable: self.connection == .unavailable,

@@ -6,13 +6,20 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "HerdrClient", targets: ["HerdrClient"]),
+        .library(name: "ScreenSaveKit", targets: ["ScreenSaveKit"]),
         .executable(name: "notchctl", targets: ["notchctl"]),
         .executable(name: "NotchApp", targets: ["NotchApp"]),
+        // Command-line alias for launching NotchApp directly into its ambient
+        // full-screen presentation.
+        .executable(name: "screensave", targets: ["NotchApp"]),
     ],
     targets: [
         // Milestone M1: headless core (socket client + models + store + classifier + actions).
         .target(
             name: "HerdrClient"
+        ),
+        .target(
+            name: "ScreenSaveKit"
         ),
         // Milestone M1 gate: CLI harness that dogfoods the core.
         .executableTarget(
@@ -22,7 +29,7 @@ let package = Package(
         // Milestone M2: notch NSPanel UI app.
         .executableTarget(
             name: "NotchApp",
-            dependencies: ["HerdrClient"],
+            dependencies: ["HerdrClient", "ScreenSaveKit"],
             exclude: ["README.md"],
             resources: [.process("Resources")]
         ),
@@ -33,7 +40,7 @@ let package = Package(
         ),
         .testTarget(
             name: "NotchAppTests",
-            dependencies: ["NotchApp"]
+            dependencies: ["NotchApp", "ScreenSaveKit"]
         ),
     ]
 )

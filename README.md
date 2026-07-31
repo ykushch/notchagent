@@ -27,6 +27,8 @@ an accelerator. The UI stays thin and every response remains explicitly user-dri
   panel's **Mode** button, including Claude Auto mode when it is available.
 - Supports display placement, global hotkeys, sounds, Do Not Disturb, and launch
   at login without adding a Dock icon.
+- Includes a standard macOS screen saver that presents live agent status while
+  keeping prompt text and terminal output out of the screen-saver process.
 
 ## Status colors
 
@@ -145,6 +147,30 @@ To build an app bundle from source:
 ```bash
 ./bundle.sh && open build/NotchApp.app
 ```
+
+### Screen saver
+
+Open **Notch Agent Settings → Screen Saver**, then:
+
+1. Click **Preview** to try the full-screen presentation without changing macOS.
+2. Click **Install…** and approve the standard macOS installer prompt.
+3. Click **Open Screen Saver Settings…**, then choose **Notch Agent** under the
+   custom screen savers.
+
+Keep NotchAgent running for live updates. The saver reads a status-only
+heartbeat; if that heartbeat becomes stale, it hides agent and project names.
+macOS does not provide a public consumer API for silently changing the selected
+screen saver, so the final selection remains an explicit System Settings step.
+
+For development, `swift run screensave` launches the same presentation directly.
+To build only the installable plug-in, run:
+
+```bash
+./scripts/build-screensaver.sh
+```
+
+The output is `build/NotchAgent.saver`. `bundle.sh` embeds it in
+`NotchApp.app/Contents/Resources` so Settings can hand it to the system installer.
 
 ## Updating
 
@@ -275,6 +301,20 @@ agent count on hover (or stays visible by preference), and a blocked agent opens
 directly into its actionable interaction.
 See [`Sources/NotchApp/README.md`](Sources/NotchApp/README.md) for the manual
 test checklist.
+
+## `screensave` — the live agent screen save
+
+```bash
+swift run screensave
+# Equivalent when invoking the app product directly:
+swift run NotchApp screensave
+```
+
+Launches the same app directly into a full-screen, animated agent-status board
+on every display. It reuses NotchAgent's session discovery, SSH tunnels, and
+snapshot reconciliation; prompt bodies and response controls are deliberately
+not shown. Move the mouse, click, scroll, or press any key to exit. A running
+NotchApp can also start it from **Start Screen Save** in the menu-bar menu.
 
 ## Layout
 

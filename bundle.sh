@@ -39,6 +39,8 @@ fi
 
 echo "Building ($CONFIG)"
 swift build -c "$CONFIG" --product "$APP"
+VERSION="$VERSION" BUILD_NUMBER="$BUILD_NUMBER" \
+    ./scripts/build-screensaver.sh "$CONFIG"
 BIN="$(swift build -c "$CONFIG" --show-bin-path)/${APP}"
 
 echo "Assembling $OUT"
@@ -47,6 +49,7 @@ mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 cp "$BIN" "$OUT/Contents/MacOS/${APP}"
 # App icon: regenerate with `swift scripts/generate-app-icon.swift`.
 cp Assets/AppIcon.icns "$OUT/Contents/Resources/AppIcon.icns"
+cp -R build/NotchAgent.saver "$OUT/Contents/Resources/"
 # Keep the SwiftPM target resource bundle in the standard signed resource area.
 # HerdrBrandMark also checks beside the executable for the `swift run` layout.
 RESOURCE_BUNDLE="$(dirname "$BIN")/NotchAgent_NotchApp.bundle"

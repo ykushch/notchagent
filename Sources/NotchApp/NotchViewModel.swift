@@ -30,6 +30,7 @@ final class NotchViewModel {
 
     var presentation: NotchPresentation = .compact
     var isExpanded: Bool { presentation.isExpanded }
+    private(set) var isScreenSaveVisible = false
 
     // MARK: Live state
 
@@ -386,6 +387,12 @@ final class NotchViewModel {
         presentation = .compact
         registry.refreshEventSubscriptionPolicies()
     }
+    /// The screen-save surface is presentation only. Runtimes keep their current
+    /// stores, drafts, and event streams while snapshot polling moves to the
+    /// visible cadence for every session on the board.
+    func setScreenSaveVisible(_ isVisible: Bool) {
+        isScreenSaveVisible = isVisible
+    }
     func clearSelection() {
         showOverview()
     }
@@ -609,12 +616,13 @@ final class NotchViewModel {
 // MARK: - SessionRuntimeHost
 
 extension NotchViewModel: SessionRuntimeHost {
-    var isNotchExpanded: Bool { isExpanded }
+    var hasVisibleLiveSurface: Bool { isExpanded || isScreenSaveVisible }
     var preservesResolvedSelection: Bool { presentation.preservesResolvedSelection }
 
     /// Every row is visible in overview, while focused detail shows only its
     /// selected session. A single session preserves the original fast cadence.
     func isVisibleSession(_ runtime: SessionRuntime) -> Bool {
+        if isScreenSaveVisible { return true }
         if registry.runtimes.count <= 1 { return true }
         switch presentation {
         case .compact:
