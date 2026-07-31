@@ -151,41 +151,74 @@ private struct AuroraScreenSaveBackdrop: View {
         graphics.drawLayer { layer in
             layer.blendMode = .plusLighter
             layer.addFilter(.blur(radius: 46))
+            drawAuroraRibbons(
+                in: &layer,
+                size: size,
+                time: time,
+                colors: ribbonColors)
+        }
+    }
 
-            for index in ribbonColors.indices {
-                let phase = Double(index) * 1.73 + Double(screenSeed) * 0.61
-                var path = Path()
-                let sampleCount = 32
-                for sample in 0...sampleCount {
-                    let progress = CGFloat(sample) / CGFloat(sampleCount)
-                    let x = size.width * (progress * 1.20 - 0.10)
-                    let primaryWave = sin(
-                        Double(progress) * 5.2 + phase + time * (0.025 + Double(index) * 0.004))
-                    let secondaryWave = cos(
-                        Double(progress) * 2.4 - phase * 0.7 + time * 0.017)
-                    let baseline = 0.26 + CGFloat(index) * 0.135
-                    let y = size.height * (
-                        baseline + CGFloat(primaryWave) * 0.10
-                            + CGFloat(secondaryWave) * 0.045)
-                    if sample == 0 {
-                        path.move(to: CGPoint(x: x, y: y))
-                    } else {
-                        path.addLine(to: CGPoint(x: x, y: y))
-                    }
-                }
+    private func drawAuroraRibbons(
+        in graphics: inout GraphicsContext,
+        size: CGSize,
+        time: TimeInterval,
+        colors: [[Color]]
+    ) {
+        let gradientStart = CGPoint(x: 0, y: size.height * 0.5)
+        let gradientEnd = CGPoint(x: size.width, y: size.height * 0.5)
 
-                layer.stroke(
-                    path,
-                    with: .linearGradient(
-                        Gradient(colors: ribbonColors[index]),
-                        startPoint: CGPoint(x: 0, y: size.height * 0.5),
-                        endPoint: CGPoint(x: size.width, y: size.height * 0.5)),
-                    style: StrokeStyle(
-                        lineWidth: size.height * (0.13 + CGFloat(index) * 0.018),
-                        lineCap: .round,
-                        lineJoin: .round))
+        for index in colors.indices {
+            let path = auroraPath(index: index, size: size, time: time)
+            let gradient = Gradient(colors: colors[index])
+            let shading = GraphicsContext.Shading.linearGradient(
+                gradient,
+                startPoint: gradientStart,
+                endPoint: gradientEnd)
+            let widthScale = CGFloat(0.13) + CGFloat(index) * CGFloat(0.018)
+            let strokeStyle = StrokeStyle(
+                lineWidth: size.height * widthScale,
+                lineCap: .round,
+                lineJoin: .round)
+            graphics.stroke(path, with: shading, style: strokeStyle)
+        }
+    }
+
+    private func auroraPath(
+        index: Int,
+        size: CGSize,
+        time: TimeInterval
+    ) -> Path {
+        let indexValue = Double(index)
+        let phase = indexValue * 1.73 + Double(screenSeed) * 0.61
+        let sampleCount = 32
+        var path = Path()
+
+        for sample in 0...sampleCount {
+            let progress = CGFloat(sample) / CGFloat(sampleCount)
+            let progressValue = Double(progress)
+            let xScale = progress * CGFloat(1.20) - CGFloat(0.10)
+            let x = size.width * xScale
+
+            let primarySpeed = 0.025 + indexValue * 0.004
+            let primaryPhase = progressValue * 5.2 + phase + time * primarySpeed
+            let secondaryPhase = progressValue * 2.4 - phase * 0.7 + time * 0.017
+            let primaryWave = CGFloat(sin(primaryPhase))
+            let secondaryWave = CGFloat(cos(secondaryPhase))
+            let baseline = CGFloat(0.26) + CGFloat(index) * CGFloat(0.135)
+            let yScale = baseline
+                + primaryWave * CGFloat(0.10)
+                + secondaryWave * CGFloat(0.045)
+            let point = CGPoint(x: x, y: size.height * yScale)
+
+            if sample == 0 {
+                path.move(to: point)
+            } else {
+                path.addLine(to: point)
             }
         }
+
+        return path
     }
 
     private func unit(_ value: Double) -> CGFloat {
