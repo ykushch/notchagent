@@ -183,6 +183,11 @@ public actor SSHTunnel {
         } catch {
             return .failed("Couldn't start ssh: \(error)")
         }
+        // `Process` duplicates the pipe's write descriptor into the child. The
+        // parent must close its copy or the reader may never observe EOF after
+        // ssh exits. Older Foundation versions do not consistently do this for
+        // us, which can strand test and app shutdown in the drain wait.
+        try? errPipe.fileHandleForWriting.close()
         self.process = process
         let stderrDrain = BoundedPipeDrain(
             handle: errPipe.fileHandleForReading, maximumBytes: 64 * 1024)
@@ -210,10 +215,10 @@ public actor SSHTunnel {
             if !process.isRunning { gate.resume() }
         }
         self.process = nil
-        stderrDrain.wait()
+        let stderrData = stderrDrain.finish(timeout: 1)
 
         let stderr = String(
-            decoding: stderrDrain.data, as: UTF8.self)
+            decoding: stderrData, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let failure = readinessTimedOut
             ? Self.readinessFailure(stderr: stderr, configuration: configuration)
@@ -308,7 +313,7 @@ public actor SSHTunnel {
 
 /// Continuously drains a long-lived helper's pipe while retaining only a bounded
 /// stderr tail for diagnostics.
-private final class BoundedPipeDrain: @unchecked Sendable {
+final class BoundedPipeDrain: @unchecked Sendable {
     private let handle: FileHandle
     private let maximumBytes: Int
     private let completion = DispatchGroup()
@@ -333,8 +338,14 @@ private final class BoundedPipeDrain: @unchecked Sendable {
         completion.enter()
         DispatchQueue.global(qos: .utility).async { [self] in
             while true {
-                let chunk = handle.availableData
-                if chunk.isEmpty { break }
+                let chunk: Data
+                do {
+                    guard let next = try handle.read(upToCount: 16 * 1024),
+                          !next.isEmpty else { break }
+                    chunk = next
+                } catch {
+                    break
+                }
                 lock.lock()
                 captured.append(chunk)
                 if captured.count > maximumBytes {
@@ -346,11 +357,13 @@ private final class BoundedPipeDrain: @unchecked Sendable {
         }
     }
 
-    func wait() {
-        completion.wait()
-    }
-
-    var data: Data {
+    /// Waits briefly for EOF, then closes the reader to guarantee that a
+    /// retained or inherited writer cannot strand tunnel shutdown forever.
+    func finish(timeout: TimeInterval) -> Data {
+        if completion.wait(timeout: .now() + timeout) == .timedOut {
+            try? handle.close()
+            _ = completion.wait(timeout: .now() + 0.25)
+        }
         lock.lock()
         defer { lock.unlock() }
         return captured

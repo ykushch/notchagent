@@ -219,6 +219,24 @@ struct SSHTunnelSupervisionTests {
         await tunnel.stop()
     }
 
+    @Test("stderr drain is bounded when a writer never closes")
+    func stderrDrainCannotWaitForever() throws {
+        let pipe = Pipe()
+        let drain = BoundedPipeDrain(
+            handle: pipe.fileHandleForReading,
+            maximumBytes: 1_024)
+        drain.start()
+        try pipe.fileHandleForWriting.write(
+            contentsOf: Data("still open".utf8))
+        let startedAt = Date()
+
+        let data = drain.finish(timeout: 0.05)
+
+        #expect(Date().timeIntervalSince(startedAt) < 1)
+        #expect(String(decoding: data, as: UTF8.self) == "still open")
+        try? pipe.fileHandleForWriting.close()
+    }
+
     @Test("stderr is drained while a long-lived tunnel is running")
     func drainsStderrBeforeExit() async throws {
         let script = try makeScript(Self.noisyBindingScript, name: "noisy")
