@@ -17,8 +17,13 @@ trap 'rm -rf "$TMP"' EXIT
 OUTPUT="$ROOT/build/NotchAgent.saver"
 EXECUTABLE="$OUTPUT/Contents/MacOS/NotchAgentScreenSaver"
 SOURCES=(
+    "$ROOT/Sources/ScreenSaveKit/ScreenSaveConfiguration.swift"
     "$ROOT/Sources/ScreenSaveKit/ScreenSaveSnapshot.swift"
+    "$ROOT/Sources/ScreenSaveKit/ScreenSaveGridLayout.swift"
     "$ROOT/Sources/ScreenSaveKit/ScreenSaveStatusView.swift"
+    "$ROOT/Sources/ScreenSaveKit/ClassicScreenSaveStyle.swift"
+    "$ROOT/Sources/ScreenSaveKit/AuroraScreenSaveStyle.swift"
+    "$ROOT/Sources/ScreenSaveKit/WallpaperScreenSaveStyle.swift"
     "$ROOT/Sources/NotchScreenSaver/NotchAgentScreenSaverView.swift"
 )
 

@@ -27,8 +27,9 @@ an accelerator. The UI stays thin and every response remains explicitly user-dri
   panel's **Mode** button, including Claude Auto mode when it is available.
 - Supports display placement, global hotkeys, sounds, Do Not Disturb, and launch
   at login without adding a Dock icon.
-- Includes a standard macOS screen saver that presents live agent status while
-  keeping prompt text and terminal output out of the screen-saver process.
+- Includes a standard macOS screen saver for keeping live agent status visible
+  as your display locks, with Classic, Aurora Observatory, and Current Wallpaper
+  styles. Prompt text and terminal output stay out of the screen-saver process.
 
 ## Status colors
 
@@ -63,6 +64,20 @@ near-black surfaces rather than cool neutral gray.
 <p align="center">
   <img src="Docs/img/05-notch-agent-menu.png" width="620" alt="NotchAgent settings for sessions, sounds, hotkeys, display placement, compact indicator behavior, and launch at login">
 </p>
+
+### Keep agents visible on the lock screen
+
+NotchAgent includes a native macOS screen saver that turns the otherwise idle
+display into a privacy-safe live status board. See which agents are working,
+idle, done, or waiting for input without exposing prompts, terminal output, or
+response controls.
+
+Choose **Classic**, **Aurora Observatory**, or **Current Wallpaper** in Notch
+Agent Settings. Current Wallpaper caches a still of the wallpaper on each
+display and places the live agent cards over it; Apple's animated wallpaper
+motion is not reproduced.
+
+![NotchAgent screen saver showing two live agents over the current macOS wallpaper](Docs/img/screensaver-locked.jpg)
 
 ## Requirements
 
@@ -152,9 +167,13 @@ To build an app bundle from source:
 
 Open **Notch Agent Settings → Screen Saver**, then:
 
-1. Click **Preview** to try the full-screen presentation without changing macOS.
-2. Click **Install…** and approve the standard macOS installer prompt.
-3. Click **Open Screen Saver Settings…**, then choose **Notch Agent** under the
+1. Choose a style, then click **Preview** to try the full-screen presentation
+   without changing macOS.
+2. Click **Install…** (or **Update…**) and approve the standard macOS installer
+   prompt.
+3. Click **Reload Installed Saver** so macOS starts a fresh host with the newly
+   installed build.
+4. Click **Open Screen Saver Settings…**, then choose **Notch Agent** under the
    custom screen savers.
 
 Keep NotchAgent running for live updates. The saver reads a status-only
@@ -313,8 +332,8 @@ swift run NotchApp screensave
 Launches the same app directly into a full-screen, animated agent-status board
 on every display. It reuses NotchAgent's session discovery, SSH tunnels, and
 snapshot reconciliation; prompt bodies and response controls are deliberately
-not shown. Move the mouse, click, scroll, or press any key to exit. A running
-NotchApp can also start it from **Start Screen Save** in the menu-bar menu.
+not shown. Move the mouse, click, scroll, or press any key to exit. The packaged
+app also provides **Preview** under **Notch Agent Settings → Screen Saver**.
 
 ## Layout
 

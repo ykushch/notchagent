@@ -1,6 +1,7 @@
 import AppKit
 import HerdrClient
 import Observation
+import ScreenSaveKit
 
 enum HotkeyModifier: String, CaseIterable, Identifiable {
     case controlOption, control, option, commandOption, commandControl, command
@@ -115,6 +116,9 @@ final class Settings {
     var customTerminalAppName: String { didSet { defaults.set(customTerminalAppName, forKey: Keys.customTerminalAppName) } }
     var customTerminalBundleID: String { didSet { defaults.set(customTerminalBundleID, forKey: Keys.customTerminalBundleID) } }
     var compactIndicatorMode: CompactIndicatorMode { didSet { defaults.set(compactIndicatorMode.rawValue, forKey: Keys.compactIndicatorMode) } }
+    var screenSaveStyle: ScreenSaveStyleID {
+        didSet { defaults.set(screenSaveStyle.rawValue, forKey: Keys.screenSaveStyle) }
+    }
     var launchAtLogin: Bool { didSet { defaults.set(launchAtLogin, forKey: Keys.launchAtLogin); LoginItem.setEnabled(launchAtLogin) } }
     var askForAccessibilityOnLaunch: Bool { didSet { defaults.set(askForAccessibilityOnLaunch, forKey: Keys.askForAccessibilityOnLaunch) } }
     var automaticUpdateChecks: Bool { didSet { defaults.set(automaticUpdateChecks, forKey: Keys.automaticUpdateChecks) } }
@@ -140,6 +144,8 @@ final class Settings {
         customTerminalBundleID = defaults.string(forKey: Keys.customTerminalBundleID) ?? ""
         compactIndicatorMode = CompactIndicatorMode(
             rawValue: defaults.string(forKey: Keys.compactIndicatorMode) ?? "") ?? .revealOnHover
+        screenSaveStyle = ScreenSaveStyleID(
+            rawValue: defaults.string(forKey: Keys.screenSaveStyle) ?? "") ?? .classic
         launchAtLogin = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
         askForAccessibilityOnLaunch =
             defaults.object(forKey: Keys.askForAccessibilityOnLaunch) as? Bool ?? true
@@ -229,6 +235,7 @@ final class Settings {
         static let customTerminalAppName = "customTerminalAppName"
         static let customTerminalBundleID = "customTerminalBundleID"
         static let compactIndicatorMode = "compactIndicatorMode"
+        static let screenSaveStyle = "screenSaveStyle"
         static let launchAtLogin = "launchAtLogin"
         static let askForAccessibilityOnLaunch = "askForAccessibilityOnLaunch"
         static let automaticUpdateChecks = "automaticUpdateChecks"

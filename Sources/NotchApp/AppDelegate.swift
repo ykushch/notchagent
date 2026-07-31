@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         soundEngine = sound
         updateChecker = updates
         viewModel = model
-        let snapshotPublisher = ScreenSaveSnapshotPublisher(model: model)
+        let snapshotPublisher = ScreenSaveSnapshotPublisher(model: model, settings: settings)
         screenSaveSnapshotPublisher = snapshotPublisher
 
         if launchMode == .screenSave {
@@ -69,7 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 model?.remoteHostsDidChange()
             },
             onToggleNotch: { [weak model] in model?.toggle() },
-            onStartScreenSave: { [weak self] in self?.startScreenSave() }
+            onPreviewScreenSave: { [weak self] in self?.startScreenSave() }
         )
         menuBar.install()
         updates.start()
@@ -93,9 +93,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     private func startScreenSave() {
-        guard screenSaveController == nil, let viewModel else { return }
+        guard screenSaveController == nil, let viewModel, let settings else { return }
         viewModel.setScreenSaveVisible(true)
-        let controller = ScreenSaveWindowController(model: viewModel) { [weak self] in
+        let controller = ScreenSaveWindowController(
+            model: viewModel, settings: settings
+        ) { [weak self] in
             self?.finishScreenSave()
         }
         screenSaveController = controller

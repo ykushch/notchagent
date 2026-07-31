@@ -1,11 +1,29 @@
 import Foundation
 import HerdrClient
+import ScreenSaveKit
 import Testing
 @testable import NotchApp
 
 @MainActor
 @Suite("Settings")
 struct SettingsTests {
+    @Test("Screen saver style defaults safely and writes its stable identifier")
+    func screenSaveStylePersistence() {
+        let suiteName = "NotchAppTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let settings = Settings(defaults: defaults)
+        #expect(settings.screenSaveStyle == .classic)
+
+        settings.screenSaveStyle = .aurora
+        #expect(defaults.string(forKey: "screenSaveStyle") == "aurora")
+        #expect(Settings(defaults: defaults).screenSaveStyle == .aurora)
+
+        defaults.set("future-style", forKey: "screenSaveStyle")
+        #expect(Settings(defaults: defaults).screenSaveStyle == .classic)
+    }
+
     @Test("Accessibility launch prompt defaults on and can be disabled persistently")
     func accessibilityLaunchPromptPersistence() {
         let suiteName = "NotchAppTests.\(UUID().uuidString)"

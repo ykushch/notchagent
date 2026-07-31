@@ -6,12 +6,14 @@ import SwiftUI
 @MainActor
 final class ScreenSaveWindowController {
     private let model: NotchViewModel
+    private let settings: Settings
     private let onDismiss: () -> Void
     private var windows: [ScreenSaveWindow] = []
     private var cursorIsHidden = false
 
-    init(model: NotchViewModel, onDismiss: @escaping () -> Void) {
+    init(model: NotchViewModel, settings: Settings, onDismiss: @escaping () -> Void) {
         self.model = model
+        self.settings = settings
         self.onDismiss = onDismiss
     }
 
@@ -22,7 +24,9 @@ final class ScreenSaveWindowController {
 
         windows = screens.enumerated().map { index, screen in
             let root = ScreenSaveView(
-                model: model, screenIndex: index, screenCount: screens.count)
+                model: model, settings: settings,
+                displayID: screen.screenSaveDisplayID,
+                screenIndex: index, screenCount: screens.count)
             let hostingView = NSHostingView(rootView: root)
             return ScreenSaveWindow(
                 frame: screen.frame, contentView: hostingView,

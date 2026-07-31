@@ -29,6 +29,20 @@ final class NotchAgentScreenSaverView: ScreenSaverView {
         return nil
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let screen = window?.screen else { return }
+        let screens = NSScreen.screens
+        let index = screens.firstIndex(where: { $0 === screen }) ?? 0
+        let displayID = (screen.deviceDescription[
+            NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)
+            .map { String($0.uint32Value) }
+        feed.setScreenContext(
+            displayID: displayID,
+            screenIndex: index,
+            screenCount: screens.count)
+    }
+
     override func startAnimation() {
         super.startAnimation()
         feed.start()
@@ -43,6 +57,10 @@ final class NotchAgentScreenSaverView: ScreenSaverView {
 @MainActor
 private final class ScreenSaverFeed: ObservableObject {
     @Published private(set) var snapshot = ScreenSaveSnapshot.unavailable()
+    @Published private(set) var configuration = ScreenSaveConfiguration.default
+    @Published private(set) var displayID: String?
+    @Published private(set) var screenIndex = 0
+    @Published private(set) var screenCount = 1
     private var refreshTask: Task<Void, Never>?
 
     func start() {
@@ -66,7 +84,17 @@ private final class ScreenSaverFeed: ObservableObject {
         refreshTask = nil
     }
 
+    func setScreenContext(displayID: String?, screenIndex: Int, screenCount: Int) {
+        self.displayID = displayID
+        self.screenIndex = screenIndex
+        self.screenCount = max(1, screenCount)
+    }
+
     private func reload(at now: Date) {
+        if let data = try? Data(contentsOf: ScreenSaveConfigurationLocation.fileURL()),
+           let decoded = try? JSONDecoder().decode(ScreenSaveConfiguration.self, from: data) {
+            configuration = decoded.validated()
+        }
         do {
             let data = try Data(contentsOf: ScreenSaveSnapshotLocation.fileURL())
             snapshot = try JSONDecoder().decode(ScreenSaveSnapshot.self, from: data)
@@ -84,7 +112,11 @@ private struct ScreenSaverRootView: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             ScreenSaveStatusView(
                 snapshot: feed.snapshot.hidingStaleData(at: context.date),
-                now: context.date)
+                configuration: feed.configuration,
+                now: context.date,
+                displayID: feed.displayID,
+                screenIndex: feed.screenIndex,
+                screenCount: feed.screenCount)
         }
     }
 }

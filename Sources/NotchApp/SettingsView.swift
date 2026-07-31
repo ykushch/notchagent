@@ -1,4 +1,5 @@
 import HerdrClient
+import ScreenSaveKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -55,6 +56,7 @@ struct SettingsView: View {
             }
 
             ScreenSaverSettingsSection(
+                settings: settings,
                 installer: screenSaverInstaller,
                 onPreview: onPreviewScreenSave)
 
@@ -129,18 +131,37 @@ struct SettingsView: View {
 }
 
 private struct ScreenSaverSettingsSection: View {
+    @Bindable var settings: Settings
     @Bindable var installer: ScreenSaverInstaller
     let onPreview: () -> Void
 
     var body: some View {
         Section("Screen Saver") {
             LabeledContent("Notch Agent", value: installer.state.statusText)
+            Picker("Style", selection: $settings.screenSaveStyle) {
+                ForEach(ScreenSaveStyleID.allCases) { style in
+                    Text(style.displayName).tag(style)
+                }
+            }
+            if settings.screenSaveStyle == .currentWallpaper {
+                Text("Uses a privacy-safe cached still of the current wallpaper on each display. Apple’s animated wallpaper motion is not reproduced.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             HStack {
                 Button("Preview", action: onPreview)
                 Button(installer.state.actionTitle, action: installer.install)
                     .disabled(installer.state == .sourceUnavailable)
                 Spacer()
                 Button("Open Screen Saver Settings…", action: installer.openSystemSettings)
+            }
+            HStack {
+                Button("Reload Installed Saver", action: installer.reloadInstalledSaver)
+                    .disabled(!installer.canReloadInstalledSaver)
+                Spacer()
+                Text("Use after Install, Update, or Reinstall")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Text("The standard saver shows live status only; prompts, terminal output, and response controls stay in NotchAgent. Keep NotchAgent running for live updates.")
                 .font(.caption)

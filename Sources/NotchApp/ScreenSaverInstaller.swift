@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import Observation
 
@@ -41,6 +42,7 @@ final class ScreenSaverInstaller {
     @ObservationIgnored private let fileExists: (URL) -> Bool
     @ObservationIgnored private let bundleVersion: (URL) -> String?
     @ObservationIgnored private let openURL: (URL) -> Bool
+    @ObservationIgnored private let reloadHosts: @MainActor () -> Int
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
 
     init(
@@ -49,22 +51,16 @@ final class ScreenSaverInstaller {
         fileExists: @escaping (URL) -> Bool = {
             FileManager.default.fileExists(atPath: $0.path)
         },
-        bundleVersion: @escaping (URL) -> String? = {
-            let bundle = Bundle(url: $0)
-            let version = bundle?.object(
-                forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-            let build = bundle?.object(
-                forInfoDictionaryKey: "CFBundleVersion") as? String
-            let components = [version, build].compactMap { $0 }
-            return components.isEmpty ? nil : components.joined(separator: "+")
-        },
-        openURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) }
+        bundleVersion: @escaping (URL) -> String? = ScreenSaverInstaller.readBundleVersion,
+        openURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) },
+        reloadHosts: @escaping @MainActor () -> Int = ScreenSaverInstaller.reloadLegacyHosts
     ) {
         self.sourceURL = sourceURL
         self.installedURL = installedURL
         self.fileExists = fileExists
         self.bundleVersion = bundleVersion
         self.openURL = openURL
+        self.reloadHosts = reloadHosts
         refresh()
     }
 
@@ -86,8 +82,24 @@ final class ScreenSaverInstaller {
             message = "macOS could not open the screen-saver installer."
             return
         }
-        message = "Approve the macOS installation prompt, then choose Notch Agent in Screen Saver settings."
+        message = "Approve the macOS installation prompt, then click Reload Installed Saver so macOS uses the new build."
         beginRefreshPolling()
+    }
+
+    var canReloadInstalledSaver: Bool {
+        state == .installed || state == .updateAvailable
+    }
+
+    func reloadInstalledSaver() {
+        refresh()
+        guard canReloadInstalledSaver else {
+            message = "Finish installing the latest saver before reloading it."
+            return
+        }
+        let count = reloadHosts()
+        message = count == 0
+            ? "No cached saver host was running. macOS will load the installed build next time."
+            : "Reloaded the installed saver. macOS will start a fresh host when it is previewed or activated."
     }
 
     func openSystemSettings() {
@@ -120,6 +132,28 @@ final class ScreenSaverInstaller {
         return .installed
     }
 
+    /// Reads Info.plist directly so an app that stays running across a saver
+    /// reinstall does not reuse Foundation's cached Bundle metadata.
+    nonisolated static func readBundleVersion(at saverURL: URL) -> String? {
+        let infoURL = saverURL.appendingPathComponent("Contents/Info.plist")
+        guard let data = try? Data(contentsOf: infoURL),
+              let object = try? PropertyListSerialization.propertyList(
+                from: data, format: nil),
+              let info = object as? [String: Any] else {
+            return nil
+        }
+        let version = info["CFBundleShortVersionString"] as? String
+        let build = info["CFBundleVersion"] as? String
+        let components = [version, build].compactMap { $0 }
+        return components.isEmpty ? nil : components.joined(separator: "+")
+    }
+
+    static func shouldContinueInstallPolling(
+        state: ScreenSaverInstallationState
+    ) -> Bool {
+        state != .installed
+    }
+
     static func defaultInstalledURL(fileManager: FileManager = .default) -> URL {
         fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Screen Savers", isDirectory: true)
@@ -140,6 +174,16 @@ final class ScreenSaverInstaller {
         return candidates.first { fileManager.fileExists(atPath: $0.path) }
     }
 
+    private static func reloadLegacyHosts() -> Int {
+        NSRunningApplication.runningApplications(
+            withBundleIdentifier: "com.apple.ScreenSaver.Engine.legacyScreenSaver"
+        ).reduce(into: 0) { count, application in
+            if Darwin.kill(application.processIdentifier, SIGTERM) == 0 {
+                count += 1
+            }
+        }
+    }
+
     private func beginRefreshPolling() {
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in
@@ -151,7 +195,7 @@ final class ScreenSaverInstaller {
                 }
                 guard let self else { return }
                 refresh()
-                if state == .installed || state == .updateAvailable { return }
+                if !Self.shouldContinueInstallPolling(state: state) { return }
             }
         }
     }
