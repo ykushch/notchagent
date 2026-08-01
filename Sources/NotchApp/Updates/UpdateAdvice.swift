@@ -21,12 +21,12 @@ enum UpdateAdvice {
         let primaryLinkActionTitle: String
         let releaseNotesURL: URL
         /// Shown once, because an ad-hoc signature changes identity on upgrade
-        /// and macOS drops the Accessibility grant with it.
+        /// and macOS can drop Accessibility and Automation grants with it.
         let accessibilityReminder: String
     }
 
     static let accessibilityReminder =
-        "After upgrading, re-enable Notch Agent in System Settings → Privacy & Security → Accessibility."
+        "After upgrading, re-enable Accessibility only if you use agent global shortcuts. If you use the screen saver shortcut, re-approve Automation access for System Events."
 
     static func guidance(
         for origin: InstallOrigin,

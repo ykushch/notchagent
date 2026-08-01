@@ -6,30 +6,39 @@ final class MenuBarController: NSObject {
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
     private let settings: Settings
+    private let model: NotchViewModel
     private let updates: UpdateChecker
     private let onSessionChange: () -> Void
     private let onRemoteHostsChange: () -> Void
     private let onToggleNotch: () -> Void
     private let onPreviewScreenSave: () -> Void
+    private let screenSaverAutomation: SystemScreenSaverAutomation
+    private let screenSaverHotKeyRegistrar: ScreenSaverHotKeyRegistrar
     /// Live session state, so Settings can show what each session is doing.
     private weak var registry: SessionRegistry?
 
     init(
         settings: Settings,
+        model: NotchViewModel,
         updates: UpdateChecker,
         registry: SessionRegistry?,
         onSessionChange: @escaping () -> Void,
         onRemoteHostsChange: @escaping () -> Void,
         onToggleNotch: @escaping () -> Void,
-        onPreviewScreenSave: @escaping () -> Void
+        onPreviewScreenSave: @escaping () -> Void,
+        screenSaverAutomation: SystemScreenSaverAutomation,
+        screenSaverHotKeyRegistrar: ScreenSaverHotKeyRegistrar
     ) {
         self.settings = settings
+        self.model = model
         self.updates = updates
         self.registry = registry
         self.onSessionChange = onSessionChange
         self.onRemoteHostsChange = onRemoteHostsChange
         self.onToggleNotch = onToggleNotch
         self.onPreviewScreenSave = onPreviewScreenSave
+        self.screenSaverAutomation = screenSaverAutomation
+        self.screenSaverHotKeyRegistrar = screenSaverHotKeyRegistrar
     }
 
     func install() {
@@ -165,10 +174,13 @@ final class MenuBarController: NSObject {
         if let settingsWindow { settingsWindow.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
         let view = SettingsView(
             settings: settings,
+            model: model,
             updates: updates,
             onSessionChange: onSessionChange,
             onRemoteHostsChange: onRemoteHostsChange,
             onPreviewScreenSave: onPreviewScreenSave,
+            screenSaverAutomation: screenSaverAutomation,
+            screenSaverHotKeyRegistrar: screenSaverHotKeyRegistrar,
             availableSessions: registry?.runtimes
                 .filter { !$0.descriptor.isRemote && !$0.descriptor.isDefault }
                 .map(\.descriptor.kind.name)

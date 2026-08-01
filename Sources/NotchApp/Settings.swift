@@ -110,12 +110,24 @@ final class Settings {
     var soundEnabled: Bool { didSet { defaults.set(soundEnabled, forKey: Keys.soundEnabled) } }
     var soundPack: String { didSet { defaults.set(soundPack, forKey: Keys.soundPack) } }
     var respectDND: Bool { didSet { defaults.set(respectDND, forKey: Keys.respectDND) } }
+    var agentGlobalHotkeysEnabled: Bool {
+        didSet { defaults.set(agentGlobalHotkeysEnabled, forKey: Keys.agentGlobalHotkeysEnabled) }
+    }
     var hotkeyModifier: HotkeyModifier { didSet { defaults.set(hotkeyModifier.rawValue, forKey: Keys.hotkeyModifier) } }
     var displayPlacement: DisplayPlacement { didSet { defaults.set(displayPlacement.rawValue, forKey: Keys.displayPlacement) } }
     var preferredTerminal: PreferredTerminal { didSet { defaults.set(preferredTerminal.rawValue, forKey: Keys.preferredTerminal) } }
     var customTerminalAppName: String { didSet { defaults.set(customTerminalAppName, forKey: Keys.customTerminalAppName) } }
     var customTerminalBundleID: String { didSet { defaults.set(customTerminalBundleID, forKey: Keys.customTerminalBundleID) } }
     var compactIndicatorMode: CompactIndicatorMode { didSet { defaults.set(compactIndicatorMode.rawValue, forKey: Keys.compactIndicatorMode) } }
+    var screenSaverShortcut: GlobalKeyboardShortcut? {
+        didSet {
+            if let screenSaverShortcut {
+                defaults.set(try? JSONEncoder().encode(screenSaverShortcut), forKey: Keys.screenSaverShortcut)
+            } else {
+                defaults.removeObject(forKey: Keys.screenSaverShortcut)
+            }
+        }
+    }
     var screenSaveStyle: ScreenSaveStyleID {
         didSet { defaults.set(screenSaveStyle.rawValue, forKey: Keys.screenSaveStyle) }
     }
@@ -135,6 +147,8 @@ final class Settings {
         soundEnabled = defaults.object(forKey: Keys.soundEnabled) as? Bool ?? true
         soundPack = defaults.string(forKey: Keys.soundPack) ?? "default"
         respectDND = defaults.object(forKey: Keys.respectDND) as? Bool ?? true
+        agentGlobalHotkeysEnabled =
+            defaults.object(forKey: Keys.agentGlobalHotkeysEnabled) as? Bool ?? true
         hotkeyModifier = HotkeyModifier(rawValue: defaults.string(forKey: Keys.hotkeyModifier) ?? "") ?? .controlOption
         displayPlacement = DisplayPlacement(
             rawValue: defaults.string(forKey: Keys.displayPlacement) ?? "") ?? .notchDisplay
@@ -144,6 +158,8 @@ final class Settings {
         customTerminalBundleID = defaults.string(forKey: Keys.customTerminalBundleID) ?? ""
         compactIndicatorMode = CompactIndicatorMode(
             rawValue: defaults.string(forKey: Keys.compactIndicatorMode) ?? "") ?? .revealOnHover
+        screenSaverShortcut = defaults.data(forKey: Keys.screenSaverShortcut)
+            .flatMap { try? JSONDecoder().decode(GlobalKeyboardShortcut.self, from: $0) }
         screenSaveStyle = ScreenSaveStyleID(
             rawValue: defaults.string(forKey: Keys.screenSaveStyle) ?? "") ?? .classic
         launchAtLogin = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
@@ -229,12 +245,14 @@ final class Settings {
         static let soundEnabled = "soundEnabled"
         static let soundPack = "soundPack"
         static let respectDND = "respectDND"
+        static let agentGlobalHotkeysEnabled = "agentGlobalHotkeysEnabled"
         static let hotkeyModifier = "hotkeyModifier"
         static let displayPlacement = "displayPlacement"
         static let preferredTerminal = "preferredTerminal"
         static let customTerminalAppName = "customTerminalAppName"
         static let customTerminalBundleID = "customTerminalBundleID"
         static let compactIndicatorMode = "compactIndicatorMode"
+        static let screenSaverShortcut = "screenSaverShortcut"
         static let screenSaveStyle = "screenSaveStyle"
         static let launchAtLogin = "launchAtLogin"
         static let askForAccessibilityOnLaunch = "askForAccessibilityOnLaunch"

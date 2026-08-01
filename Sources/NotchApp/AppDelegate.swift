@@ -9,6 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeyMonitor: HotkeyMonitor?
     private var menuBar: MenuBarController?
     private var settings: Settings?
+    private var screenSaverAutomation: SystemScreenSaverAutomation?
+    private var screenSaverHotKeyRegistrar: ScreenSaverHotKeyRegistrar?
     private var soundEngine: SoundEngine?
     private var updateChecker: UpdateChecker?
     private var screenSaveSnapshotPublisher: ScreenSaveSnapshotPublisher?
@@ -25,6 +27,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let model = NotchViewModel(pinnedSession: settings.resolvedSession())
         let sound = SoundEngine(settings: settings)
         let updates = UpdateChecker(settings: settings)
+        let screenSaverAutomation = SystemScreenSaverAutomation()
+        let screenSaverHotKeyRegistrar = ScreenSaverHotKeyRegistrar(
+            settings: settings,
+            onPressed: { [weak screenSaverAutomation] in
+                _ = screenSaverAutomation?.start()
+            })
         model.settings = settings
         model.soundEngine = sound
         model.updateChecker = updates
@@ -32,6 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.settings = settings
         soundEngine = sound
         updateChecker = updates
+        self.screenSaverAutomation = screenSaverAutomation
+        self.screenSaverHotKeyRegistrar = screenSaverHotKeyRegistrar
         viewModel = model
         let snapshotPublisher = ScreenSaveSnapshotPublisher(model: model, settings: settings)
         screenSaveSnapshotPublisher = snapshotPublisher
@@ -51,14 +61,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.start()
         snapshotPublisher.start()
 
+        screenSaverHotKeyRegistrar.start()
+
         let monitor = HotkeyMonitor(viewModel: model, settings: settings)
         monitor.start()
-        if settings.askForAccessibilityOnLaunch, !HotkeyMonitor.accessibilityGranted() {
+        if settings.agentGlobalHotkeysEnabled,
+           settings.askForAccessibilityOnLaunch,
+           !HotkeyMonitor.accessibilityGranted() {
             HotkeyMonitor.promptForAccessibility()
         }
 
         let menuBar = MenuBarController(
             settings: settings,
+            model: model,
             updates: updates,
             registry: model.registry,
             onSessionChange: { [weak model, weak settings] in
@@ -69,7 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 model?.remoteHostsDidChange()
             },
             onToggleNotch: { [weak model] in model?.toggle() },
-            onPreviewScreenSave: { [weak self] in self?.startScreenSave() }
+            onPreviewScreenSave: { [weak self] in self?.startScreenSave() },
+            screenSaverAutomation: screenSaverAutomation,
+            screenSaverHotKeyRegistrar: screenSaverHotKeyRegistrar
         )
         menuBar.install()
         updates.start()
@@ -88,6 +105,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notchController?.tearDown()
         screenSaveController?.tearDown()
         screenSaveController = nil
+        screenSaverHotKeyRegistrar?.stop()
+        screenSaverHotKeyRegistrar = nil
+        screenSaverAutomation = nil
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

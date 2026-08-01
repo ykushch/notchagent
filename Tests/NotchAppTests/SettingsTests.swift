@@ -37,6 +37,19 @@ struct SettingsTests {
         #expect(!Settings(defaults: defaults).askForAccessibilityOnLaunch)
     }
 
+    @Test("Agent global shortcuts remain available by default and can be disabled")
+    func agentGlobalHotkeyPersistence() {
+        let suiteName = "NotchAppTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let initial = Settings(defaults: defaults)
+        #expect(initial.agentGlobalHotkeysEnabled)
+
+        initial.agentGlobalHotkeysEnabled = false
+        #expect(!Settings(defaults: defaults).agentGlobalHotkeysEnabled)
+    }
+
     @Test("Compact indicator defaults to reveal on hover and persists")
     func compactIndicatorPersistence() {
         let suiteName = "NotchAppTests.\(UUID().uuidString)"

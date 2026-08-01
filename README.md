@@ -175,11 +175,18 @@ Open **Notch Agent Settings → Screen Saver**, then:
    installed build.
 4. Click **Open Screen Saver Settings…**, then choose **Notch Agent** under the
    custom screen savers.
+5. Optionally record a **Keyboard shortcut** in the same section. Click
+   **Enable…** beside Automation and allow Notch Agent to control System Events,
+   then use **Test Screen Saver** to verify it. The shortcut starts the
+   currently selected macOS screen saver; it does not change which saver is
+   selected. Its global registration does not require Accessibility permission.
 
 Keep NotchAgent running for live updates. The saver reads a status-only
 heartbeat; if that heartbeat becomes stale, it hides agent and project names.
 macOS does not provide a public consumer API for silently changing the selected
 screen saver, so the final selection remains an explicit System Settings step.
+The shortcut uses macOS Automation to start that selected saver and follows the
+Lock Screen password policy configured by macOS.
 
 For development, `swift run screensave` launches the same presentation directly.
 To build only the installable plug-in, run:
@@ -203,18 +210,22 @@ brew upgrade --cask ykushch/tap/notchagent
 
 Manual installs get a direct link to the new archive instead. Because release
 bundles are ad-hoc signed rather than notarized, macOS treats each upgraded copy
-as a new identity, so **re-enable Notch Agent under Accessibility after every
-upgrade** (remove the stale entry with the − button first).
+as a new identity. If you use optional agent global shortcuts, re-enable Notch
+Agent under **Privacy & Security → Accessibility** after every upgrade (remove
+the stale entry with the − button first). If you configured the screen saver
+shortcut, also re-approve Notch Agent under **Privacy & Security → Automation →
+System Events**.
 
 Automatic checks can be turned off under **Settings → Updates**, which also has
 a **Check Now** button. The check is a single unauthenticated GET to GitHub with
 no query parameters and no identifiers.
 
-On first launch, grant **Notch Agent** access in **System Settings → Privacy &
-Security → Accessibility** to use global shortcuts. If a stale denied entry
-exists, remove it with the − button first. To keep using Notch Agent without
-global shortcuts, turn off **Ask for Accessibility access at launch** under
-**Settings → Startup**.
+Agent approve, deny, navigation, and reply shortcuts are optional. When they are
+enabled, grant **Notch Agent** access in **System Settings → Privacy & Security →
+Accessibility**; if a stale denied entry exists, remove it with the − button
+first. Disable **Agent global shortcuts** under **Settings → Display & keyboard**
+to run without Accessibility. The independent screen saver shortcut still works
+and only requires Automation access for **System Events**.
 
 ## Build
 

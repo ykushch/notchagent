@@ -8,7 +8,10 @@ final class HotkeyMonitor {
     private var runLoopSource: CFRunLoopSource?
     private var permissionTimer: Timer?
 
-    init(viewModel: NotchViewModel, settings: Settings) { self.viewModel = viewModel; self.settings = settings }
+    init(viewModel: NotchViewModel, settings: Settings) {
+        self.viewModel = viewModel
+        self.settings = settings
+    }
 
     func start() {
         refreshPermissionState()
@@ -21,6 +24,11 @@ final class HotkeyMonitor {
     func stop() { permissionTimer?.invalidate(); permissionTimer = nil; removeTap() }
 
     private func refreshPermissionState() {
+        guard settings.agentGlobalHotkeysEnabled else {
+            viewModel.accessibilityMissing = false
+            removeTap()
+            return
+        }
         let granted = Self.accessibilityGranted()
         viewModel.accessibilityMissing = !granted
         if granted { installIfPermitted() } else { removeTap() }
@@ -33,7 +41,10 @@ final class HotkeyMonitor {
         let mask = 1 << CGEventType.keyDown.rawValue
         guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
                                           eventsOfInterest: CGEventMask(mask), callback: hotkeyTapCallback, userInfo: selfPtr),
-              let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else { return }
+              let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            viewModel.accessibilityMissing = true
+            return
+        }
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         eventTap = tap; runLoopSource = source; viewModel.accessibilityMissing = false
@@ -45,7 +56,8 @@ final class HotkeyMonitor {
         runLoopSource = nil; eventTap = nil
     }
 
-    fileprivate func handleKey(keyCode: Int64, flags: NSEvent.ModifierFlags, characters: String?) -> Bool {
+    func handleKey(keyCode: Int64, flags: NSEvent.ModifierFlags, characters: String?) -> Bool {
+        guard settings.agentGlobalHotkeysEnabled else { return false }
         guard viewModel.selected != nil else { return false }
         let relevant: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
         guard flags.intersection(relevant) == settings.hotkeyModifier.flags else { return false }

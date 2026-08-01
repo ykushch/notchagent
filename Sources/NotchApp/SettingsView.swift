@@ -4,10 +4,13 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var settings: Settings
+    @Bindable var model: NotchViewModel
     @Bindable var updates: UpdateChecker
     let onSessionChange: () -> Void
     let onRemoteHostsChange: () -> Void
     let onPreviewScreenSave: () -> Void
+    let screenSaverAutomation: SystemScreenSaverAutomation
+    let screenSaverHotKeyRegistrar: ScreenSaverHotKeyRegistrar
     let availableSessions: [String]
     /// Live registry, so each row can show what the session is actually doing
     /// rather than just what was configured.
@@ -48,16 +51,24 @@ struct SettingsView: View {
                 Text(displayPlacementHelp)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Picker("Hotkey modifier", selection: $settings.hotkeyModifier) {
-                    ForEach(HotkeyModifier.allCases) {
-                        Text("\($0.displayName) (\($0.symbols))").tag($0)
+                Toggle("Enable agent global shortcuts", isOn: $settings.agentGlobalHotkeysEnabled)
+                if settings.agentGlobalHotkeysEnabled {
+                    Picker("Agent shortcut modifier", selection: $settings.hotkeyModifier) {
+                        ForEach(HotkeyModifier.allCases) {
+                            Text("\($0.displayName) (\($0.symbols))").tag($0)
+                        }
                     }
                 }
+                Text("Screen-saver shortcut registration is independent of agent shortcuts and Accessibility access.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             ScreenSaverSettingsSection(
                 settings: settings,
                 installer: screenSaverInstaller,
+                screenSaverAutomation: screenSaverAutomation,
+                screenSaverHotKeyRegistrar: screenSaverHotKeyRegistrar,
                 onPreview: onPreviewScreenSave)
 
             Section("Jump") {
@@ -75,12 +86,27 @@ struct SettingsView: View {
 
             Section("Startup") {
                 Toggle("Launch at login", isOn: $settings.launchAtLogin)
-                Toggle(
-                    "Ask for Accessibility access at launch",
-                    isOn: $settings.askForAccessibilityOnLaunch)
-                Text("Accessibility access is only needed for global keyboard shortcuts.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if settings.agentGlobalHotkeysEnabled {
+                    Toggle(
+                        "Ask for Accessibility access at launch",
+                        isOn: $settings.askForAccessibilityOnLaunch)
+                    HStack {
+                        LabeledContent(
+                            "Agent shortcut access",
+                            value: model.accessibilityMissing ? "Accessibility needed" : "Ready")
+                        Spacer()
+                        if model.accessibilityMissing {
+                            Button("Open Accessibility Settings…", action: openAccessibilitySettings)
+                        }
+                    }
+                    Text("Accessibility is used only for optional agent approve, deny, navigation, and reply shortcuts.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Agent global shortcuts are off. The screen-saver shortcut remains available without Accessibility access.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Updates") {
@@ -98,7 +124,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
-        .frame(width: 500, height: 740)
+        .frame(width: 500, height: 800)
         .task {
             screenSaverInstaller.refresh()
             // Present Settings immediately, then ask the CLI off the main actor.
@@ -118,6 +144,14 @@ struct SettingsView: View {
         }.value
     }
 
+    private func openAccessibilitySettings() {
+        HotkeyMonitor.promptForAccessibility()
+        if let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     private var displayPlacementHelp: String {
         switch settings.displayPlacement {
         case .notchDisplay:
@@ -133,7 +167,11 @@ struct SettingsView: View {
 private struct ScreenSaverSettingsSection: View {
     @Bindable var settings: Settings
     @Bindable var installer: ScreenSaverInstaller
+    @Bindable var screenSaverAutomation: SystemScreenSaverAutomation
+    @Bindable var screenSaverHotKeyRegistrar: ScreenSaverHotKeyRegistrar
     let onPreview: () -> Void
+    @State private var isRecordingShortcut = false
+    @State private var shortcutMessage: String?
 
     var body: some View {
         Section("Screen Saver") {
@@ -148,6 +186,79 @@ private struct ScreenSaverSettingsSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            HStack {
+                Text("Keyboard shortcut")
+                Spacer()
+                ShortcutRecorderView(
+                    shortcut: $settings.screenSaverShortcut,
+                    isRecording: $isRecordingShortcut,
+                    onRecorded: { shortcut in
+                        guard !settings.agentGlobalHotkeysEnabled
+                                || !shortcut.conflictsWithAgentHotkeys(modifier: settings.hotkeyModifier) else {
+                            shortcutMessage = "That shortcut is already used for an agent action."
+                            return
+                        }
+                        settings.screenSaverShortcut = shortcut
+                        shortcutMessage = nil
+                    },
+                    onCleared: {
+                        settings.screenSaverShortcut = nil
+                        shortcutMessage = nil
+                    },
+                    onInvalid: { shortcutMessage = $0 })
+                    .frame(width: 150, height: 28)
+            }
+            if settings.screenSaverShortcut != nil {
+                HStack {
+                    Button("Clear Shortcut") {
+                        settings.screenSaverShortcut = nil
+                        shortcutMessage = nil
+                    }
+                    Spacer()
+                    Text("Starts the currently selected macOS screen saver.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if settings.agentGlobalHotkeysEnabled,
+               settings.screenSaverShortcut?.conflictsWithAgentHotkeys(modifier: settings.hotkeyModifier) == true {
+                Text("This shortcut conflicts with an agent action. Choose another shortcut or change the general hotkey modifier.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            HStack {
+                LabeledContent("Automation", value: screenSaverAutomation.state.statusText)
+                Spacer()
+                Button("Enable…", action: screenSaverAutomation.requestPermission)
+                    .disabled(screenSaverAutomation.state == .authorized)
+                if screenSaverAutomation.state == .denied {
+                    Button("Open Settings…", action: screenSaverAutomation.openAutomationSettings)
+                }
+            }
+            HStack {
+                LabeledContent(
+                    "Shortcut registration",
+                    value: screenSaverHotKeyRegistrar.state.statusText)
+            }
+            if let message = screenSaverHotKeyRegistrar.state.message {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            if let shortcutMessage {
+                Text(shortcutMessage)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            if let message = screenSaverAutomation.message {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Button("Test Screen Saver") {
+                _ = screenSaverAutomation.start()
+            }
+            .disabled(settings.screenSaverShortcut == nil)
             HStack {
                 Button("Preview", action: onPreview)
                 Button(installer.state.actionTitle, action: installer.install)

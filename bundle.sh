@@ -76,6 +76,8 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
     <!-- Accessory app: no Dock icon, non-activating (matches setActivationPolicy(.accessory)). -->
     <key>LSUIElement</key>                 <true/>
     <key>NSHighResolutionCapable</key>     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Notch Agent uses System Events to start your selected screen saver when you press its configured shortcut.</string>
 </dict>
 </plist>
 PLIST
@@ -111,5 +113,5 @@ echo
 echo "Launch it (NOT 'swift run') so Accessibility can track it:"
 echo "  open $OUT"
 echo
-echo "Then grant: System Settings → Privacy & Security → Accessibility → enable 'Notch Agent'."
-echo "If it was previously denied, remove any stale entry with the − button first."
+echo "Optional agent shortcuts: grant Accessibility to 'Notch Agent'."
+echo "The screen-saver shortcut uses Automation → System Events and does not require Accessibility."

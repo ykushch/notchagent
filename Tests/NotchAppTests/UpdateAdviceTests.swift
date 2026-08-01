@@ -32,12 +32,13 @@ struct UpdateAdviceTests {
         #expect(guidance.releaseNotesURL == Self.manifest.releaseNotesURL)
     }
 
-    @Test("Every path warns about the Accessibility grant an ad-hoc upgrade drops")
+    @Test("Every path warns about the TCC grants an ad-hoc upgrade can drop")
     func accessibilityReminder() {
         for origin in [InstallOrigin.homebrew, .manual, .development] {
             let guidance = UpdateAdvice.guidance(
                 for: origin, manifest: Self.manifest, currentVersion: nil)
             #expect(guidance.accessibilityReminder.contains("Accessibility"))
+            #expect(guidance.accessibilityReminder.contains("Automation"))
         }
     }
 
