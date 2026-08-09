@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var screenSaverAutomation: SystemScreenSaverAutomation?
     private var screenSaverHotKeyRegistrar: ScreenSaverHotKeyRegistrar?
     private var soundEngine: SoundEngine?
+    private var agentNotifications: AgentNotificationController?
     private var updateChecker: UpdateChecker?
     private var screenSaveSnapshotPublisher: ScreenSaveSnapshotPublisher?
 
@@ -54,6 +55,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model.start()
             snapshotPublisher.start()
             return
+        }
+
+        // UserNotifications needs the stable identity of the packaged .app.
+        // Keep `swift run NotchApp` useful for UI development without attempting
+        // to register a bare executable with Notification Center.
+        if Bundle.main.bundleIdentifier != nil {
+            let agentNotifications = AgentNotificationController(settings: settings)
+            model.notificationController = agentNotifications
+            agentNotifications.setActionHandler { [weak model] ref in
+                model?.handleNotificationJump(ref)
+            }
+            agentNotifications.start()
+            self.agentNotifications = agentNotifications
         }
 
         let controller = NotchWindowController(viewModel: model, settings: settings)
@@ -100,6 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyMonitor?.stop()
         updateChecker?.stop()
         screenSaveSnapshotPublisher?.stop()
+        agentNotifications?.stop()
         viewModel?.stop()
         menuBar?.remove()
         notchController?.tearDown()

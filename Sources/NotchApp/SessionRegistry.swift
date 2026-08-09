@@ -134,6 +134,7 @@ final class SessionRegistry {
         for (id, runtime) in runtimesByID where wanted[id] == nil {
             runtime.stop()
             runtimesByID[id] = nil
+            host?.sessionRuntimeWasRemoved(sessionID: id)
         }
 
         for (id, session) in wanted {

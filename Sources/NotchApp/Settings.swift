@@ -110,6 +110,9 @@ final class Settings {
     var soundEnabled: Bool { didSet { defaults.set(soundEnabled, forKey: Keys.soundEnabled) } }
     var soundPack: String { didSet { defaults.set(soundPack, forKey: Keys.soundPack) } }
     var respectDND: Bool { didSet { defaults.set(respectDND, forKey: Keys.respectDND) } }
+    var notificationsEnabled: Bool {
+        didSet { defaults.set(notificationsEnabled, forKey: Keys.notificationsEnabled) }
+    }
     var agentGlobalHotkeysEnabled: Bool {
         didSet { defaults.set(agentGlobalHotkeysEnabled, forKey: Keys.agentGlobalHotkeysEnabled) }
     }
@@ -147,6 +150,8 @@ final class Settings {
         soundEnabled = defaults.object(forKey: Keys.soundEnabled) as? Bool ?? true
         soundPack = defaults.string(forKey: Keys.soundPack) ?? "default"
         respectDND = defaults.object(forKey: Keys.respectDND) as? Bool ?? true
+        notificationsEnabled =
+            defaults.object(forKey: Keys.notificationsEnabled) as? Bool ?? true
         agentGlobalHotkeysEnabled =
             defaults.object(forKey: Keys.agentGlobalHotkeysEnabled) as? Bool ?? true
         hotkeyModifier = HotkeyModifier(rawValue: defaults.string(forKey: Keys.hotkeyModifier) ?? "") ?? .controlOption
@@ -245,6 +250,7 @@ final class Settings {
         static let soundEnabled = "soundEnabled"
         static let soundPack = "soundPack"
         static let respectDND = "respectDND"
+        static let notificationsEnabled = "notificationsEnabled"
         static let agentGlobalHotkeysEnabled = "agentGlobalHotkeysEnabled"
         static let hotkeyModifier = "hotkeyModifier"
         static let displayPlacement = "displayPlacement"

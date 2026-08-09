@@ -25,8 +25,10 @@ an accelerator. The UI stays thin and every response remains explicitly user-dri
   preserving a terminal fallback for anything uncertain.
 - Displays and cycles Claude and Codex interaction modes from the focused
   panel's **Mode** button, including Claude Auto mode when it is available.
-- Supports display placement, global hotkeys, sounds, Do Not Disturb, and launch
-  at login without adding a Dock icon.
+- Posts native macOS notifications when an agent needs input or finishes, with
+  a safe **Jump** action back to the exact session and terminal pane.
+- Supports display placement, global hotkeys, sounds, Focus / Do Not Disturb,
+  and launch at login without adding a Dock icon.
 - Includes a standard macOS screen saver for keeping live agent status visible
   as your display locks, with Classic, Aurora Observatory, and Current Wallpaper
   styles. Prompt text and terminal output stay out of the screen-saver process.

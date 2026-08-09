@@ -37,6 +37,19 @@ struct SettingsTests {
         #expect(!Settings(defaults: defaults).askForAccessibilityOnLaunch)
     }
 
+    @Test("Agent notifications default on and can be disabled persistently")
+    func notificationPersistence() {
+        let suiteName = "NotchAppTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let initial = Settings(defaults: defaults)
+        #expect(initial.notificationsEnabled)
+
+        initial.notificationsEnabled = false
+        #expect(!Settings(defaults: defaults).notificationsEnabled)
+    }
+
     @Test("Agent global shortcuts remain available by default and can be disabled")
     func agentGlobalHotkeyPersistence() {
         let suiteName = "NotchAppTests.\(UUID().uuidString)"

@@ -42,6 +42,7 @@ final class NotchViewModel {
     private static let localRefreshesPerRemoteRefresh = 6
 
     @ObservationIgnored private var discoveryTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingNotificationJumpTasks: [AgentRef: Task<Void, Never>] = [:]
     /// Set when the app was configured with an explicit socket, which pins the
     /// notch to exactly that server instead of discovering sessions.
     @ObservationIgnored private var pinnedSession: ResolvedSession?
@@ -214,6 +215,7 @@ final class NotchViewModel {
     /// Optional sound engine + settings (injected by the app). The store is the
     /// source of truth; these are side-effects on state transitions.
     @ObservationIgnored var soundEngine: SoundEngine?
+    @ObservationIgnored var notificationController: AgentNotificationController?
     @ObservationIgnored var settings: Settings?
     /// Update state lives in its own observable object; reading through this
     /// reference inside a view body still tracks the checker's own changes.
@@ -222,6 +224,18 @@ final class NotchViewModel {
     /// The configured hotkey modifier symbols (e.g. "^⌥") for UI hints. Falls back
     /// to "^⌥" if settings aren't wired yet.
     var hotkeySymbols: String { settings?.hotkeyModifier.symbols ?? "^⌥" }
+
+    var notificationAuthorizationSummary: String {
+        notificationController?.authorization.summary ?? "Unavailable"
+    }
+
+    var notificationAuthorizationDenied: Bool {
+        notificationController?.authorization == .denied
+    }
+
+    var notificationTimeSensitiveUnavailable: Bool {
+        notificationController?.supportsTimeSensitive == false
+    }
 
     // MARK: Derived summary for the collapsed pill
 
@@ -325,7 +339,20 @@ final class NotchViewModel {
     func stop() {
         discoveryTask?.cancel()
         discoveryTask = nil
+        for task in pendingNotificationJumpTasks.values { task.cancel() }
+        pendingNotificationJumpTasks = [:]
         registry.stop()
+    }
+
+    func notificationsSettingChanged() {
+        notificationController?.settingsDidChange()
+    }
+
+    func openNotificationSettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+        else { return }
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: Selection
@@ -525,6 +552,33 @@ final class NotchViewModel {
     // MARK: Jump
 
     func jumpSelected() { if let selected { jump(selected) } }
+
+    /// A notification can launch the accessory app before session discovery has
+    /// rebuilt the referenced runtime. Buffer only the full session-scoped ref;
+    /// never fall back to a same-named pane on another server.
+    func handleNotificationJump(_ ref: AgentRef) {
+        if registry.runtime(for: ref) != nil {
+            jump(ref)
+            return
+        }
+        pendingNotificationJumpTasks[ref]?.cancel()
+        pendingNotificationJumpTasks[ref] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.pendingNotificationJumpTasks[ref] = nil }
+            for _ in 0..<120 {
+                guard !Task.isCancelled else { return }
+                if self.registry.runtime(for: ref) != nil {
+                    self.jump(ref)
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            self.jumpNotice = JumpNotice(
+                text: "This notification refers to an agent that is no longer available.",
+                attachCommand: nil)
+        }
+    }
+
     func jump(_ ref: AgentRef) {
         guard let runtime = registry.runtime(for: ref) else { return }
         if ref == selected { markUserEngaged() }
@@ -536,6 +590,9 @@ final class NotchViewModel {
                 let result = try await runtime.jump(paneID: ref.paneID, presenter: presenter)
                 handleJumpResult(
                     result, terminalID: terminalID, descriptor: runtime.descriptor)
+                if case .jumped(terminal: .presented) = result {
+                    notificationController?.removeNotifications(for: ref)
+                }
             }
             catch {
                 let message = "Couldn't jump to this agent: \(String(describing: error))"
@@ -619,6 +676,10 @@ extension NotchViewModel: SessionRuntimeHost {
     var hasVisibleLiveSurface: Bool { isExpanded || isScreenSaveVisible }
     var preservesResolvedSelection: Bool { presentation.preservesResolvedSelection }
 
+    func sessionRuntimeWasRemoved(sessionID: String) {
+        notificationController?.removeNotifications(sessionID: sessionID)
+    }
+
     /// Every row is visible in overview, while focused detail shows only its
     /// selected session. A single session preserves the original fast cadence.
     func isVisibleSession(_ runtime: SessionRuntime) -> Bool {
@@ -661,6 +722,24 @@ extension NotchViewModel: SessionRuntimeHost {
         for _ in transitions.newlyFinishedPaneIDs {
             soundEngine?.play(.done)
         }
+        let rows = Dictionary(uniqueKeysWithValues: attentionItems.map { ($0.ref, $0) })
+        for paneID in transitions.newlyBlockedPaneIDs {
+            let ref = AgentRef(sessionID: runtime.sessionID, paneID: paneID)
+            if let item = rows[ref] {
+                notificationController?.post(item: item, kind: .blocked)
+            }
+        }
+        for paneID in transitions.newlyFinishedPaneIDs {
+            let ref = AgentRef(sessionID: runtime.sessionID, paneID: paneID)
+            if let item = rows[ref] {
+                notificationController?.post(item: item, kind: .done)
+            }
+        }
+        notificationController?.reconcileBlocked(
+            sessionID: runtime.sessionID,
+            activeRefs: Set(runtime.store.blockedPanes.map {
+                AgentRef(sessionID: runtime.sessionID, paneID: $0.paneID)
+            }))
         if presentation.allowsAutomaticFocus,
            !transitions.newlyBlockedPaneIDs.isEmpty,
            let target = runtime.interactions.attentionOrder.first {

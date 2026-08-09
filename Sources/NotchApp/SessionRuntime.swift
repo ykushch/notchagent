@@ -26,6 +26,13 @@ protocol SessionRuntimeHost: AnyObject {
     func sessionRuntime(
         _ runtime: SessionRuntime,
         didObserve transitions: SessionRuntime.Transitions) async
+    /// Called when discovery removes a whole server, so presentation side-effects
+    /// tied to its globally-scoped pane identities can be cleaned up.
+    func sessionRuntimeWasRemoved(sessionID: String)
+}
+
+extension SessionRuntimeHost {
+    func sessionRuntimeWasRemoved(sessionID: String) {}
 }
 
 /// Everything needed to talk to ONE herdr server.

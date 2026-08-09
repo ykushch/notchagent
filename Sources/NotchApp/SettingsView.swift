@@ -37,11 +37,35 @@ struct SettingsView: View {
             Section("Behavior") {
                 Toggle("Auto-expand when done", isOn: $settings.autoExpandOnDone)
                 Toggle("Enable sounds", isOn: $settings.soundEnabled)
-                Toggle("Respect Do Not Disturb", isOn: $settings.respectDND)
+                Toggle("Agent notifications", isOn: $settings.notificationsEnabled)
+                    .onChange(of: settings.notificationsEnabled) {
+                        model.notificationsSettingChanged()
+                    }
+                if settings.notificationsEnabled {
+                    LabeledContent(
+                        "Notification permission",
+                        value: model.notificationAuthorizationSummary)
+                    if model.notificationAuthorizationDenied {
+                        Button("Open Notification Settings…") {
+                            model.openNotificationSettings()
+                        }
+                    }
+                }
+                Toggle("Respect Focus / Do Not Disturb", isOn: $settings.respectDND)
+                if settings.notificationsEnabled,
+                   !settings.respectDND,
+                   model.notificationTimeSensitiveUnavailable {
+                    Text("This build cannot bypass Focus for notification banners; custom sounds still follow this setting.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Picker("Compact indicator", selection: $settings.compactIndicatorMode) {
                     ForEach(CompactIndicatorMode.allCases) { Text($0.displayName).tag($0) }
                 }
                 Text("Reveal on hover keeps a minimal status line visible until you point at it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Notifications include the same one-line prompt or completion summary shown in the notch. macOS controls lock-screen previews.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

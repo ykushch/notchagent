@@ -13,6 +13,8 @@ VERSION="${VERSION:-0.1}"
 APP="NotchApp"
 BUNDLE_ID="dev.notchagent.NotchApp"
 OUT="build/${APP}.app"
+SIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
+ENABLE_TIME_SENSITIVE_NOTIFICATIONS="${ENABLE_TIME_SENSITIVE_NOTIFICATIONS:-false}"
 GIT_REVISION="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
 BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 BUILD_NUMBER="$(date -u +%Y%m%d%H%M%S)"
@@ -23,6 +25,14 @@ case "$CONFIG" in
 esac
 if [[ ! "$VERSION" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
     echo "VERSION must be numeric components separated by dots (for example, 1.2.3)" >&2
+    exit 2
+fi
+case "$ENABLE_TIME_SENSITIVE_NOTIFICATIONS" in
+    true|false) ;;
+    *) echo "ENABLE_TIME_SENSITIVE_NOTIFICATIONS must be true or false" >&2; exit 2 ;;
+esac
+if [[ "$ENABLE_TIME_SENSITIVE_NOTIFICATIONS" == "true" && "$SIGN_IDENTITY" == "-" ]]; then
+    echo "Time-sensitive notifications require a certificate signing identity" >&2
     exit 2
 fi
 INCLUDE_SOURCE_PATH="${INCLUDE_SOURCE_PATH:-}"
@@ -76,6 +86,8 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
     <!-- Accessory app: no Dock icon, non-activating (matches setActivationPolicy(.accessory)). -->
     <key>LSUIElement</key>                 <true/>
     <key>NSHighResolutionCapable</key>     <true/>
+    <key>NotchAgentTimeSensitiveNotifications</key>
+    <false/>
     <key>NSAppleEventsUsageDescription</key>
     <string>Notch Agent uses System Events to start your selected screen saver when you press its configured shortcut.</string>
 </dict>
@@ -91,11 +103,26 @@ if [[ "$INCLUDE_SOURCE_PATH" == "true" ]]; then
     plutil -insert NotchAgentSourcePath -string "$SOURCE_PATH" "$OUT/Contents/Info.plist"
 fi
 
-# Ad-hoc code signing gives the bundle a stable identity for TCC across runs.
-# (A real Developer ID cert would be needed for distribution; ad-hoc is fine for
-# personal use — the Accessibility grant sticks to this signed bundle.)
-echo "Ad-hoc signing"
-codesign --force --deep --sign - "$OUT"
+# Time-sensitive notifications use a restricted entitlement. Embedding it in an
+# ad-hoc signature makes AMFI reject the process at spawn time, so only a build
+# with an explicit signing identity advertises and embeds this capability.
+if [[ "$ENABLE_TIME_SENSITIVE_NOTIFICATIONS" == "true" ]]; then
+    plutil -replace NotchAgentTimeSensitiveNotifications -bool true "$OUT/Contents/Info.plist"
+fi
+
+# Ad-hoc code signing gives local builds a stable identity for TCC. A
+# certificate-signed build may opt into the restricted notification entitlement.
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+    echo "Ad-hoc signing"
+    codesign --force --deep --sign - "$OUT"
+elif [[ "$ENABLE_TIME_SENSITIVE_NOTIFICATIONS" == "true" ]]; then
+    echo "Signing with $SIGN_IDENTITY and time-sensitive notifications"
+    codesign --force --deep --sign "$SIGN_IDENTITY" \
+        --entitlements NotchApp.entitlements "$OUT"
+else
+    echo "Signing with $SIGN_IDENTITY"
+    codesign --force --deep --sign "$SIGN_IDENTITY" "$OUT"
+fi
 
 if [[ "$CONFIG" == "release" ]]; then
     ARCHIVE="build/${APP}-${VERSION}.zip"

@@ -61,6 +61,11 @@ jobs:
             exit 1
           fi
           codesign --verify --deep --strict --verbose=2 build/NotchApp.app
+          test "$(plutil -extract NotchAgentTimeSensitiveNotifications raw build/NotchApp.app/Contents/Info.plist)" = "false"
+          if codesign -d --entitlements - build/NotchApp.app 2>&1 | grep -q 'com.apple.developer.usernotifications.time-sensitive'; then
+            echo "Ad-hoc release must not contain the restricted time-sensitive entitlement" >&2
+            exit 1
+          fi
           ditto -x -k "$archive" "$RUNNER_TEMP/notchagent-archive-check"
           codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/notchagent-archive-check/NotchApp.app"
           sha256="$(shasum -a 256 "$archive" | awk '{print $1}')"
