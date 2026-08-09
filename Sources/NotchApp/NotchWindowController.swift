@@ -73,7 +73,7 @@ final class NotchWindowController {
     private func observePresentation() {
         withObservationTracking {
             _ = viewModel.presentation
-            _ = viewModel.selectedInteractionSizingIdentity
+            _ = viewModel.selectedFocusedSizingIdentity
             _ = viewModel.agentCount
             _ = viewModel.connection
             _ = viewModel.accessibilityMissing
@@ -229,14 +229,14 @@ final class NotchWindowController {
                 bannerCount: bannerCount,
                 hasUpdateBanner: viewModel.pendingUpdate != nil))
         case .focused:
-            guard let identity = viewModel.selectedInteractionSizingIdentity else { return }
+            guard let identity = viewModel.selectedFocusedSizingIdentity else { return }
             let interaction = viewModel.selectedInteraction
             surfaceState.prepareFocused(
                 identity: identity,
                 estimatedHeight: geometry.focusedHeight(
                     choiceCount: interaction?.choices.count ?? 0,
                     hasEvidence: interaction?.contentEvidence != nil,
-                    hasActionShelf: viewModel.selectedInteractionState != nil))
+                    hasActionShelf: viewModel.selectedFocusedSurfaceKind.hasActionShelf))
         }
     }
 

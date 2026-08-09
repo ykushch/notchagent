@@ -1,6 +1,67 @@
 import HerdrClient
 import SwiftUI
 
+struct IdlePromptShelf: View {
+    @Bindable var model: NotchViewModel
+    @FocusState private var promptFocused: Bool
+
+    private var phase: PanePromptPhase {
+        model.selectedActivityState?.promptPhase ?? .idle
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .bottom, spacing: 7) {
+                TextField(
+                    "Give this agent a new task…",
+                    text: $model.promptText,
+                    axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
+                    .lineLimit(1...4)
+                    .focused($promptFocused)
+                    .disabled(phase == .sending)
+                    .accessibilityIdentifier("idle-prompt-field")
+
+                Button(action: model.sendIdlePromptSelected) {
+                    Label("Send", systemImage: "arrow.up")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(NotchPalette.action)
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(!model.canSendIdlePrompt)
+                .help("Send new task (Command-Return)")
+                .accessibilityIdentifier("idle-prompt-send")
+            }
+            .controlSize(.small)
+
+            if phase == .sending {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Confirming the agent is idle, then sending…")
+                }
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(NotchPalette.secondaryText)
+            }
+            if let error = model.selectedActivityState?.promptError {
+                Label(error, systemImage: "exclamationmark.circle")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(NotchPalette.blocked)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(NotchPalette.surface)
+        .onAppear {
+            Task { @MainActor in
+                await Task.yield()
+                promptFocused = true
+            }
+        }
+    }
+}
+
 /// Contextual controls remain outside the scrolling prompt so the active task
 /// has one predictable action area. Recovery controls use progressive disclosure.
 struct InteractionActionShelf: View {

@@ -38,7 +38,7 @@ struct ExpandedNotchSurface: View {
         if presentation == .overview, let content = heights[.overviewContent] {
             surface.reportOverviewHeight(chromeHeight + content)
         } else if presentation.isFocused,
-                  let identity = model.selectedInteractionSizingIdentity,
+                  let identity = model.selectedFocusedSizingIdentity,
                   let content = heights[.focusedContent] {
             surface.reportFocusedHeight(
                 chromeAndContentHeight: chromeHeight + content,
@@ -164,7 +164,7 @@ private struct NotchFocusedSurface: View {
                             JumpNoticeBanner(model: model, notice: notice)
                         }
                         FocusedSessionHeader(model: model, item: item)
-                        FocusedInteractionContent(model: model, item: item)
+                        FocusedPaneContent(model: model, item: item)
                     } else {
                         ProgressView("Loading agent…")
                             .foregroundStyle(NotchPalette.secondaryText)
@@ -174,20 +174,29 @@ private struct NotchFocusedSurface: View {
                 .padding(14)
                 .reportNotchHeight(.focusedContent)
             }
-            if let state = model.selectedInteractionState {
+            if model.selectedFocusedSurfaceKind.hasActionShelf {
                 Divider().overlay(NotchPalette.hairline)
-                if let interaction = state.interaction {
-                    InteractionActionShelf(
-                        model: model,
-                        interaction: interaction,
-                        phase: state.phase)
-                        .id(interaction.fingerprint.rawValue)
+                switch model.selectedFocusedSurfaceKind {
+                case .blocked:
+                    if let state = model.selectedInteractionState,
+                       let interaction = state.interaction {
+                        InteractionActionShelf(
+                            model: model,
+                            interaction: interaction,
+                            phase: state.phase)
+                            .id(interaction.fingerprint.rawValue)
+                            .reportNotchHeight(.actionShelf)
+                    } else if model.selectedInteractionState?.phase != .reading {
+                        TerminalFallbackShelf(
+                            model: model,
+                            warning: "No structured prompt was detected. Drive the selected terminal manually.")
+                            .reportNotchHeight(.actionShelf)
+                    }
+                case .idle:
+                    IdlePromptShelf(model: model)
                         .reportNotchHeight(.actionShelf)
-                } else if state.phase != .reading {
-                    TerminalFallbackShelf(
-                        model: model,
-                        warning: "No structured prompt was detected. Drive the selected terminal manually.")
-                        .reportNotchHeight(.actionShelf)
+                case .working, .done, .unavailable:
+                    EmptyView()
                 }
             }
         }
@@ -249,51 +258,74 @@ private struct AgentModeControl: View {
     }
 }
 
-private struct FocusedInteractionContent: View {
+private struct FocusedPaneContent: View {
     @Bindable var model: NotchViewModel
     let item: InteractionAttentionDisplayModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            if let state = model.selectedInteractionState {
-                if state.draft.state == .stale {
-                    StaleDraftBanner(model: model, state: state)
+            switch item.status {
+            case .blocked:
+                blockedContent
+            case .working:
+                WorkingOutputPreview(
+                    state: model.selectedActivityState,
+                    retry: model.retrySelectedWorkingOutput)
+            case .idle:
+                Label {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Ready for a new task")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(NotchPalette.primaryText)
+                        Text("Send a prompt below without leaving the notch.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(NotchPalette.secondaryText)
+                    }
+                } icon: {
+                    Image(systemName: "text.bubble")
+                        .foregroundStyle(NotchPalette.action)
                 }
-                if let interaction = state.interaction {
-                    InteractionDetailView(
-                        interaction: interaction,
-                        draftText: $model.replyText,
-                        phase: state.phase,
-                        hotkeySymbols: model.hotkeySymbols,
-                        respond: model.respondToSelectedInteraction)
-                } else if state.phase == .reading {
-                    ProgressView("Reading live prompt…")
-                        .foregroundStyle(NotchPalette.secondaryText)
-                } else {
-                    Text("No structured prompt was detected. Manual controls remain available.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(NotchPalette.critical)
-                }
-                if let error = state.error {
-                    StatusBanner(
-                        text: error,
-                        systemImage: "exclamationmark.circle",
-                        color: NotchPalette.critical)
-                }
-            } else {
-                Text(item.status == .done ? item.summary : idleMessage(item.status))
+            case .done:
+                Text(item.summary)
+                    .font(.system(size: 10))
+                    .foregroundStyle(NotchPalette.secondaryText)
+            case .unknown:
+                Text("No pending prompt was detected.")
                     .font(.system(size: 10))
                     .foregroundStyle(NotchPalette.secondaryText)
             }
         }
     }
 
-    private func idleMessage(_ status: RollupStatus) -> String {
-        switch status {
-        case .working: "This agent is working — nothing to answer right now."
-        case .done: "This agent finished. Jump to review its output."
-        case .idle: "This agent is idle — no prompt is waiting."
-        default: "No pending prompt was detected."
+    @ViewBuilder private var blockedContent: some View {
+        if let state = model.selectedInteractionState {
+            if state.draft.state == .stale {
+                StaleDraftBanner(model: model, state: state)
+            }
+            if let interaction = state.interaction {
+                InteractionDetailView(
+                    interaction: interaction,
+                    draftText: $model.replyText,
+                    phase: state.phase,
+                    hotkeySymbols: model.hotkeySymbols,
+                    respond: model.respondToSelectedInteraction)
+            } else if state.phase == .reading {
+                ProgressView("Reading live prompt…")
+                    .foregroundStyle(NotchPalette.secondaryText)
+            } else {
+                Text("No structured prompt was detected. Manual controls remain available.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(NotchPalette.critical)
+            }
+            if let error = state.error {
+                StatusBanner(
+                    text: error,
+                    systemImage: "exclamationmark.circle",
+                    color: NotchPalette.critical)
+            }
+        } else {
+            ProgressView("Reading live prompt…")
+                .foregroundStyle(NotchPalette.secondaryText)
         }
     }
 }

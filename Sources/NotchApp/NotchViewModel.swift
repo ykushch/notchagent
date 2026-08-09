@@ -13,6 +13,28 @@ struct JumpNotice: Sendable, Equatable {
     let attachCommand: String?
 }
 
+enum FocusedPaneSurfaceKind: String, Sendable, Equatable {
+    case blocked
+    case working
+    case idle
+    case done
+    case unavailable
+
+    init(status: RollupStatus?) {
+        self = switch status {
+        case .blocked: .blocked
+        case .working: .working
+        case .idle: .idle
+        case .done: .done
+        case .unknown, nil: .unavailable
+        }
+    }
+
+    var hasActionShelf: Bool {
+        self == .blocked || self == .idle
+    }
+}
+
 /// Observable view-model backing the notch UI (specs 08/09).
 ///
 /// Single source of truth for what the SwiftUI content shows. Owns a
@@ -66,10 +88,20 @@ final class NotchViewModel {
     var selectedInteraction: PendingInteraction? {
         selectedInteractionState?.interaction
     }
-    var selectedInteractionSizingIdentity: String? {
+    var selectedActivityState: PaneActivityState? {
+        selectedRuntime?.activity.selectedState
+    }
+    var selectedFocusedSizingIdentity: String? {
         guard let selected else { return nil }
-        let fingerprint = selectedInteraction?.fingerprint.rawValue ?? "none"
-        return "\(selected.id):\(fingerprint)"
+        let surface = switch selectedStatus {
+        case .blocked:
+            "blocked:\(selectedInteraction?.fingerprint.rawValue ?? "none")"
+        case .working: "working"
+        case .done: "done"
+        case .idle: "idle"
+        case .unknown, nil: "unknown"
+        }
+        return "\(selected.id):\(surface)"
     }
 
     var attentionItems: [InteractionAttentionDisplayModel] {
@@ -144,6 +176,10 @@ final class NotchViewModel {
         return runtime.store.derivedStatus(forPane: selected.paneID)
     }
 
+    var selectedFocusedSurfaceKind: FocusedPaneSurfaceKind {
+        FocusedPaneSurfaceKind(status: selectedStatus)
+    }
+
     var selectedAgentSupportsModeCycling: Bool {
         guard let selected, let runtime = registry.runtime(for: selected) else { return false }
         return runtime.supportsModeCycling(paneID: selected.paneID)
@@ -171,8 +207,32 @@ final class NotchViewModel {
         }
     }
 
+    /// New-task composition is independent of a blocked prompt fingerprint.
+    /// Each session runtime keeps it pane-scoped so switching agents never moves
+    /// a draft to a same-named pane on another herdr server.
+    var promptText: String {
+        get {
+            guard let selected, let runtime = registry.runtime(for: selected) else { return "" }
+            return runtime.activity.promptDraft(for: selected.paneID)
+        }
+        set {
+            guard let selected, let runtime = registry.runtime(for: selected) else { return }
+            runtime.activity.setPromptDraft(newValue, paneID: selected.paneID)
+            markUserEngaged()
+        }
+    }
+
+    var canSendIdlePrompt: Bool {
+        selectedStatus == .idle
+            && selectedRuntime?.connection == .connected
+            && selectedActivityState?.promptPhase != .sending
+            && !promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var lastError: String? {
         get {
+            if let state = selectedActivityState,
+               let error = state.promptError ?? state.outputError { return error }
             if let state = selectedInteractionState, let error = state.error { return error }
             if let runtime = selectedRuntime { return runtime.error }
             // No selection: report the first session that is actually unhappy, so a
@@ -467,6 +527,10 @@ final class NotchViewModel {
     }
     func replySelected() {
         guard let selected else { return }
+        if selectedStatus == .idle {
+            sendIdlePromptSelected()
+            return
+        }
         let text = replyText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         if let interaction = selectedInteraction,
@@ -479,6 +543,18 @@ final class NotchViewModel {
             return
         }
         runManualAction { await $0.reply(paneID: selected.paneID, text: text) }
+    }
+    func sendIdlePromptSelected() {
+        guard canSendIdlePrompt, let selected,
+              let runtime = registry.runtime(for: selected) else { return }
+        markUserEngaged()
+        Task { @MainActor in
+            _ = await runtime.sendIdlePrompt(paneID: selected.paneID)
+        }
+    }
+    func retrySelectedWorkingOutput() {
+        guard selectedStatus == .working, let runtime = selectedRuntime else { return }
+        Task { @MainActor in await runtime.retryWorkingOutput() }
     }
     func confirmSelectedDraftReuse() {
         guard let selected, let runtime = registry.runtime(for: selected) else { return }

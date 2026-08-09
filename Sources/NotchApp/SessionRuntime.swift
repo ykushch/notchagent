@@ -81,6 +81,9 @@ final class SessionRuntime {
     /// Source of truth for this session: selection, interactions, drafts, errors,
     /// revisions, reads, and response phases are all pane-keyed in here.
     let interactions: InteractionCoordinator
+    /// Selected non-blocked pane state: bounded working output and idle prompt
+    /// drafts. Kept separate from fingerprint-bound blocked interactions.
+    let activity: PaneActivityCoordinator
 
     private(set) var agentModesByPane: [String: AgentMode] = [:]
     var connection: Connection = .connecting
@@ -125,6 +128,9 @@ final class SessionRuntime {
                     registry: registry, client: nativeClient),
                 fallback: InteractionResponder(
                     provider: screenProvider, actions: actions)))
+        self.activity = PaneActivityCoordinator(
+            outputProvider: ScreenRecentOutputProvider(client: client),
+            promptSender: SafeIdlePromptSender(client: client))
     }
 
     /// `endpoint` is explicit on purpose. A remote descriptor's
@@ -244,7 +250,10 @@ final class SessionRuntime {
         }
     }
 
-    var isActing: Bool { interactions.selectedState?.phase.isBusy == true }
+    var isActing: Bool {
+        interactions.selectedState?.phase.isBusy == true
+            || activity.selectedState?.promptPhase == .sending
+    }
 
     /// Mode cycling is intentionally exposed only for agents whose terminal UI
     /// documents Shift-Tab for this purpose. We do not infer the current mode.
@@ -268,6 +277,7 @@ final class SessionRuntime {
             agentModesByPane = agentModesByPane.filter { store.panes[$0.key] != nil }
             _ = await reconcileInteractions(
                 newlyBlocked: stateTransitions.newlyBlockedPaneIDs)
+            _ = await reconcileActivity()
             await refreshSelectedAgentMode()
             await captureCompletionSummaries(
                 paneIDs: stateTransitions.newlyFinishedPaneIDs)
@@ -303,6 +313,7 @@ final class SessionRuntime {
         _ = await reconcileInteractions(
             newlyBlocked: stateTransitions.newlyBlockedPaneIDs,
             countsTowardFallbackCadence: false)
+        _ = await reconcileActivity(countsTowardFallbackCadence: false)
         await captureCompletionSummaries(
             paneIDs: stateTransitions.newlyFinishedPaneIDs)
         await host?.sessionRuntime(self, didObserve: Transitions(
@@ -341,6 +352,21 @@ final class SessionRuntime {
             countsTowardFallbackCadence: countsTowardFallbackCadence)
     }
 
+    @discardableResult
+    private func reconcileActivity(
+        countsTowardFallbackCadence: Bool = true
+    ) async -> [String] {
+        await activity.reconcile(
+            panes: store.panes.values.map { pane in
+                PaneActivitySnapshot(
+                    paneID: pane.paneID,
+                    agentStatus: pane.agentStatus,
+                    revision: pane.revision)
+            },
+            selectedPaneID: interactions.selectedPaneID,
+            countsTowardFallbackCadence: countsTowardFallbackCadence)
+    }
+
     /// One bounded tail read per newly-finished transition. Failed or empty
     /// extraction is intentionally not retried on every poll.
     private func captureCompletionSummaries(paneIDs: [String]) async {
@@ -355,10 +381,14 @@ final class SessionRuntime {
 
     func select(paneID: String) async {
         await interactions.select(paneID: paneID)
+        _ = await reconcileActivity(countsTowardFallbackCadence: false)
         await refreshAgentMode(paneID: paneID)
     }
 
-    func clearSelection() { interactions.clearSelection() }
+    func clearSelection() {
+        interactions.clearSelection()
+        activity.clearSelection()
+    }
 
     private func refreshSelectedAgentMode() async {
         guard let paneID = interactions.selectedPaneID else { return }
@@ -379,6 +409,15 @@ final class SessionRuntime {
     /// validates stable identity before it can execute any operation.
     func respond(paneID: String, intent: InteractionResponseIntent) async {
         _ = await interactions.respond(paneID: paneID, intent: intent)
+    }
+
+    @discardableResult
+    func sendIdlePrompt(paneID: String) async -> Bool {
+        await activity.sendPrompt(paneID: paneID)
+    }
+
+    func retryWorkingOutput() async {
+        _ = await activity.refreshSelectedOutput()
     }
 
     func reply(paneID: String, text: String, submit: Bool = true) async {
