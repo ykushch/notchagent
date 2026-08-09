@@ -1,7 +1,7 @@
 import Foundation
 import HerdrClient
 import Observation
-import UserNotifications
+@preconcurrency import UserNotifications
 
 enum AgentNotificationKind: String, Sendable, Equatable {
     case blocked
