@@ -61,7 +61,7 @@ private struct ExpandedNotchHeader: View {
                 }
                 .help("Show all agents")
             } else {
-                Label("\(sessionCount) agents", systemImage: "terminal")
+                Label(AgentCountLabel.text(sessionCount), systemImage: "terminal")
             }
             Spacer()
             if isFocused {
@@ -94,6 +94,16 @@ private struct ExpandedNotchHeader: View {
         .foregroundStyle(NotchPalette.secondaryText)
         .padding(.horizontal, 16)
         .frame(height: 38)
+    }
+}
+
+enum AgentCountLabel {
+    static func text(_ count: Int) -> String {
+        count == 1 ? "1 agent" : "\(count) agents"
+    }
+
+    static func attentionText(_ count: Int) -> String {
+        count == 1 ? "1 needs input" : "\(count) need input"
     }
 }
 

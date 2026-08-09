@@ -32,6 +32,8 @@ struct SettingsView: View {
                 newRemoteTarget: $newRemoteTarget,
                 newRemoteSession: $newRemoteSession)
 
+            HerdrDiagnosticsSection(registry: registry)
+
             Section("Behavior") {
                 Toggle("Auto-expand when done", isOn: $settings.autoExpandOnDone)
                 Toggle("Enable sounds", isOn: $settings.soundEnabled)
@@ -161,6 +163,252 @@ struct SettingsView: View {
         case .terminalDisplay:
             "Uses the display containing the preferred terminal, falling back to the active display."
         }
+    }
+}
+
+/// On-demand evidence from herdr itself. Snapshot state remains authoritative;
+/// this surface only answers why that state may be surprising.
+private struct HerdrDiagnosticsSection: View {
+    let registry: SessionRegistry?
+
+    @State private var reports: [String: HerdrStatusReport] = [:]
+    @State private var integrations: [HerdrIntegrationReport] = []
+    @State private var explanations: [AgentRef: HerdrAgentExplanation] = [:]
+    @State private var explanationErrors: [AgentRef: String] = [:]
+    @State private var explaining: Set<AgentRef> = []
+    @State private var error: String?
+    @State private var isRefreshing = false
+
+    private struct UnknownPane: Identifiable {
+        let ref: AgentRef
+        let sessionName: String
+        let sessionLabel: String
+        let title: String?
+        var id: String { ref.id }
+    }
+
+    private var localRuntimes: [SessionRuntime] {
+        registry?.runtimes.filter { !$0.descriptor.isRemote } ?? []
+    }
+
+    private var unknownPanes: [UnknownPane] {
+        localRuntimes.flatMap { runtime in
+            runtime.store.panes.values
+                .filter {
+                    HerdrDiagnosticPanePolicy.shouldOfferExplanation(
+                        pane: $0,
+                        derivedStatus: runtime.store.derivedStatus(forPane: $0.paneID))
+                }
+                .map { pane in
+                    UnknownPane(
+                        ref: AgentRef(sessionID: runtime.sessionID, paneID: pane.paneID),
+                        sessionName: runtime.descriptor.kind.name,
+                        sessionLabel: runtime.descriptor.label,
+                        title: pane.title)
+                }
+        }.sorted { $0.ref.id < $1.ref.id }
+    }
+
+    var body: some View {
+        Section("herdr diagnostics") {
+            if reports.isEmpty, isRefreshing {
+                ProgressView("Checking herdr…")
+                    .controlSize(.small)
+            }
+
+            ForEach(localRuntimes, id: \.sessionID) { runtime in
+                if let report = reports[runtime.sessionID] {
+                    VStack(alignment: .leading, spacing: 3) {
+                        LabeledContent(runtime.descriptor.label) {
+                            Label(
+                                healthTitle(report),
+                                systemImage: healthSymbol(report))
+                                .foregroundStyle(healthColor(report))
+                        }
+                        Text("\(report.versionSummary) · \(report.protocolSummary)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if report.compatible == false {
+                            Text("Client and server protocols are incompatible. Update herdr before debugging agent detection.")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        } else if report.restartNeeded == true {
+                            Text("herdr reports that its server needs a restart.")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+            }
+            if localRuntimes.isEmpty, let report = reports["local:default"] {
+                VStack(alignment: .leading, spacing: 3) {
+                    LabeledContent("Local herdr") {
+                        Label(healthTitle(report), systemImage: healthSymbol(report))
+                            .foregroundStyle(healthColor(report))
+                    }
+                    Text("\(report.versionSummary) · \(report.protocolSummary)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if report.compatible == false {
+                        Text("Client and server protocols are incompatible. Update herdr before debugging agent detection.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    } else if report.restartNeeded == true {
+                        Text("herdr reports that its server needs a restart.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+
+            if !unknownPanes.isEmpty {
+                Divider()
+                Text("Unknown agent detection")
+                    .font(.subheadline.weight(.medium))
+                ForEach(unknownPanes) { pane in
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(pane.title ?? pane.ref.paneID)
+                                Text("\(pane.sessionLabel) · \(pane.ref.paneID)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Explain") { explain(pane) }
+                                .disabled(explaining.contains(pane.ref))
+                        }
+                        if explaining.contains(pane.ref) {
+                            ProgressView().controlSize(.small)
+                        }
+                        if let explanation = explanations[pane.ref] {
+                            Text(explanation.summary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if let agent = explanation.agent,
+                               let integration = integrations.first(where: { $0.agent == agent }),
+                               let command = integration.installCommand {
+                                HStack {
+                                    Text("\(agent) integration: \(integration.detail)")
+                                        .font(.caption)
+                                        .foregroundStyle(.orange)
+                                    Spacer()
+                                    Button("Copy Fix") { UpdateActions.copy(command) }
+                                        .help(command)
+                                }
+                            }
+                            if let source = explanation.manifestSource {
+                                Text("Rules: \(source)\(explanation.manifestVersion.map { " (\($0))" } ?? "")")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        if let message = explanationErrors[pane.ref] {
+                            Text(message).font(.caption).foregroundStyle(.orange)
+                        }
+                    }
+                }
+            } else if !localRuntimes.isEmpty {
+                Text("No local panes are currently stuck at unknown detection.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.orange)
+            }
+            HStack {
+                Button("Refresh", action: refresh)
+                    .disabled(isRefreshing)
+                Button("Open herdr Logs…", action: openLogs)
+            }
+        }
+        .task { refresh() }
+    }
+
+    private func healthTitle(_ report: HerdrStatusReport) -> String {
+        if report.serverRunning == false { return "Not running" }
+        if report.serverRunning == nil { return "Unknown" }
+        if report.compatible == false { return "Incompatible" }
+        if let client = report.clientProtocol, let server = report.serverProtocol,
+           client != server { return "Incompatible" }
+        if report.restartNeeded == true { return "Restart needed" }
+        return "Healthy"
+    }
+
+    private func healthSymbol(_ report: HerdrStatusReport) -> String {
+        healthTitle(report) == "Healthy" ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+    }
+
+    private func healthColor(_ report: HerdrStatusReport) -> Color {
+        healthTitle(report) == "Healthy" ? .green : .orange
+    }
+
+    private func refresh() {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        error = nil
+        let discovered = localRuntimes.map { ($0.sessionID, $0.descriptor.kind.name) }
+        let sessions = discovered.isEmpty ? [("local:default", "default")] : discovered
+        Task {
+            let result = await Task.detached(priority: .utility) {
+                do {
+                    let diagnostics = HerdrDiagnostics()
+                    var reports: [String: HerdrStatusReport] = [:]
+                    for (id, name) in sessions {
+                        reports[id] = try diagnostics.status(sessionName: name)
+                    }
+                    return Result<
+                        ([String: HerdrStatusReport], [HerdrIntegrationReport]), Error
+                    >.success((reports, try diagnostics.integrations()))
+                } catch {
+                    return Result<([String: HerdrStatusReport], [HerdrIntegrationReport]), Error>
+                        .failure(error)
+                }
+            }.value
+            switch result {
+            case let .success((newReports, newIntegrations)):
+                reports = newReports
+                integrations = newIntegrations
+            case let .failure(failure):
+                error = failure.localizedDescription
+            }
+            isRefreshing = false
+        }
+    }
+
+    private func explain(_ pane: UnknownPane) {
+        explaining.insert(pane.ref)
+        explanationErrors[pane.ref] = nil
+        Task {
+            let result = await Task.detached(priority: .utility) {
+                Result { try HerdrDiagnostics().explain(
+                    paneID: pane.ref.paneID, sessionName: pane.sessionName) }
+            }.value
+            switch result {
+            case let .success(explanation): explanations[pane.ref] = explanation
+            case let .failure(failure): explanationErrors[pane.ref] = failure.localizedDescription
+            }
+            explaining.remove(pane.ref)
+        }
+    }
+
+    private func openLogs() {
+        let directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/herdr", isDirectory: true)
+        NSWorkspace.shared.open(directory)
+    }
+}
+
+/// `unknown` is also herdr's normal state for an ordinary terminal pane. Only a
+/// pane that herdr has positively identified as an agent can be "stuck unknown"
+/// and accepted by `herdr agent explain`.
+enum HerdrDiagnosticPanePolicy {
+    static func shouldOfferExplanation(
+        pane: PaneInfo, derivedStatus: RollupStatus
+    ) -> Bool {
+        pane.agent != nil && derivedStatus == .unknown
     }
 }
 
@@ -508,8 +756,7 @@ private struct SessionsSection: View {
         case .connecting: return "connecting…"
         case .unavailable: return "unreachable"
         case .connected:
-            let agents = runtime.agentCount
-            return agents == 1 ? "1 agent" : "\(agents) agents"
+            return AgentCountLabel.text(runtime.agentCount)
         }
     }
 
