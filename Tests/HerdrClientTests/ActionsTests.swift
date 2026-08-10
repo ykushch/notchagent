@@ -40,6 +40,40 @@ struct ActionsTests {
         #expect(client.recorded[0].params["keys"]?.arrayValue?.compactMap(\.stringValue)
             == ["down", "space"])
     }
+    @Test func interruptFreshChecksWorkingThenSendsOneEscape() async throws {
+        let client = MockClient()
+        client.resultForMethod["pane.get"] = .object([
+            "pane": try pane(status: .working).asJSONValue()
+        ])
+
+        #expect(try await Actions(client: client, terminal: MockTerminal())
+            .interrupt(pane: "w1:p1") == .sent)
+        #expect(client.recorded.map(\.method) == ["pane.get", "pane.send_keys"])
+        #expect(client.recorded[1].params["keys"]?.arrayValue?.compactMap(\.stringValue)
+            == ["esc"])
+    }
+    @Test func interruptRefusesPaneThatIsNoLongerWorking() async throws {
+        let client = MockClient()
+        client.resultForMethod["pane.get"] = .object([
+            "pane": try pane(status: .idle).asJSONValue()
+        ])
+
+        await #expect(throws: ActionError.self) {
+            try await Actions(client: client, terminal: MockTerminal())
+                .interrupt(pane: "w1:p1")
+        }
+        #expect(client.recorded.map(\.method) == ["pane.get"])
+    }
+    @Test func interruptRefusesUnreadableFreshPane() async {
+        let client = MockClient()
+        client.resultForMethod["pane.get"] = .object(["ok": .bool(true)])
+
+        await #expect(throws: ActionError.self) {
+            try await Actions(client: client, terminal: MockTerminal())
+                .interrupt(pane: "w1:p1")
+        }
+        #expect(client.recorded.map(\.method) == ["pane.get"])
+    }
     @Test func cycleAgentModeSendsOneBackTabSequencePerRequest() async throws {
         let client = MockClient(); let actions = Actions(client: client, terminal: MockTerminal())
         _ = try await actions.cycleAgentMode(pane: "w1:p1")
@@ -79,5 +113,12 @@ struct ActionsTests {
         let client = MockClient(); client.errorForMethod["pane.send_keys"] = .api(code: "invalid_key", message: "invalid key token")
         await #expect(throws: ActionError.self) { try await Actions(client: client, terminal: MockTerminal()).sendRawKeys(pane: "w1:p1", keys: ["prefix+x"]) }
         #expect(client.recorded.count == 1)
+    }
+
+    private func pane(status: AgentStatus) -> PaneInfo {
+        PaneInfo(
+            paneID: "w1:p1", terminalID: "term", workspaceID: "w1",
+            tabID: "w1:t1", focused: false, agentStatus: status,
+            revision: 1, agent: "codex")
     }
 }

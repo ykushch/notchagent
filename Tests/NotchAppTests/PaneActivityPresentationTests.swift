@@ -14,11 +14,11 @@ struct PaneActivityPresentationTests {
         #expect(FocusedPaneSurfaceKind(status: nil) == .unavailable)
     }
 
-    @Test("only blocked interactions and idle prompts own the action shelf")
+    @Test("blocked, working, and idle focused panes own an action shelf")
     func shelfPolicy() {
         #expect(FocusedPaneSurfaceKind.blocked.hasActionShelf)
+        #expect(FocusedPaneSurfaceKind.working.hasActionShelf)
         #expect(FocusedPaneSurfaceKind.idle.hasActionShelf)
-        #expect(!FocusedPaneSurfaceKind.working.hasActionShelf)
         #expect(!FocusedPaneSurfaceKind.done.hasActionShelf)
         #expect(!FocusedPaneSurfaceKind.unavailable.hasActionShelf)
     }

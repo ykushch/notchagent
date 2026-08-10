@@ -434,6 +434,13 @@ final class SessionRuntime {
         }
     }
 
+    /// Send one confirmed interrupt to this session's pane. `Actions` performs a
+    /// fresh status read before Escape is written; errors are returned to the host
+    /// so the working-pane shelf can keep them visible.
+    func interrupt(paneID: String) async throws {
+        _ = try await actions.interrupt(pane: paneID)
+    }
+
     func cycleAgentMode(paneID: String) async {
         let actions = actions
         await performManualAction(paneID: paneID) {

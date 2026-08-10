@@ -64,3 +64,57 @@ struct WorkingOutputPreview: View {
         .accessibilityLabel("Recent output from working agent")
     }
 }
+
+struct WorkingAgentActionShelf: View {
+    @Bindable var model: NotchViewModel
+    let item: InteractionAttentionDisplayModel
+    @State private var isConfirmingInterrupt = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Label("Agent is working", systemImage: "bolt.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(NotchPalette.secondaryText)
+                Spacer(minLength: 8)
+                if model.isInterrupting(item.ref) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Interrupting agent")
+                }
+                Button("Interrupt Agent", role: .destructive) {
+                    isConfirmingInterrupt = true
+                }
+                .buttonStyle(.bordered)
+                .tint(NotchPalette.blocked)
+                .controlSize(.small)
+                .disabled(!model.canInterrupt(item.ref))
+                .help("Send Escape once after confirmation")
+                .accessibilityIdentifier("interrupt-agent")
+                .accessibilityHint("Asks for confirmation before sending Escape once")
+            }
+
+            if let error = model.interruptError(for: item.ref) {
+                Label(error, systemImage: "exclamationmark.circle")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(NotchPalette.blocked)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(NotchPalette.surface)
+        .confirmationDialog(
+            "Interrupt this agent?",
+            isPresented: $isConfirmingInterrupt,
+            titleVisibility: .visible
+        ) {
+            Button("Interrupt Agent", role: .destructive) {
+                model.interrupt(item.ref)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This sends Escape once to \(item.agentName) in \(item.workspaceLabel). It may stop the current command or response, but it does not terminate the Herdr session or terminal.")
+        }
+    }
+}

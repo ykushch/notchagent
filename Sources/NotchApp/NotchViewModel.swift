@@ -31,7 +31,7 @@ enum FocusedPaneSurfaceKind: String, Sendable, Equatable {
     }
 
     var hasActionShelf: Bool {
-        self == .blocked || self == .idle
+        self == .blocked || self == .working || self == .idle
     }
 }
 
@@ -57,6 +57,10 @@ final class NotchViewModel {
     // MARK: Live state
 
     let registry = SessionRegistry()
+    /// Confirmation targets and failures are session-scoped: every herdr server
+    /// can independently own a pane named `w1:p1`.
+    private(set) var interruptingAgents: Set<AgentRef> = []
+    private(set) var interruptErrors: [AgentRef: String] = [:]
 
     /// Local discovery is cheap; remote discovery opens an SSH command channel and
     /// therefore runs much less often.
@@ -401,6 +405,8 @@ final class NotchViewModel {
         discoveryTask = nil
         for task in pendingNotificationJumpTasks.values { task.cancel() }
         pendingNotificationJumpTasks = [:]
+        interruptingAgents = []
+        interruptErrors = [:]
         registry.stop()
     }
 
@@ -555,6 +561,52 @@ final class NotchViewModel {
     func retrySelectedWorkingOutput() {
         guard selectedStatus == .working, let runtime = selectedRuntime else { return }
         Task { @MainActor in await runtime.retryWorkingOutput() }
+    }
+    func canInterrupt(_ ref: AgentRef) -> Bool {
+        guard let runtime = registry.runtime(for: ref) else { return false }
+        return runtime.connection == .connected
+            && runtime.store.derivedStatus(forPane: ref.paneID) == .working
+            && !interruptingAgents.contains(ref)
+    }
+    func isInterrupting(_ ref: AgentRef) -> Bool {
+        interruptingAgents.contains(ref)
+    }
+    func interruptError(for ref: AgentRef) -> String? {
+        interruptErrors[ref]
+    }
+    func interrupt(_ ref: AgentRef) {
+        guard let runtime = registry.runtime(for: ref) else {
+            interruptErrors[ref] = "This agent is no longer available. Nothing was sent."
+            return
+        }
+        guard runtime.connection == .connected else {
+            interruptErrors[ref] = "This session isn't connected. Nothing was sent."
+            return
+        }
+        let status = runtime.store.derivedStatus(forPane: ref.paneID)
+        guard status == .working else {
+            interruptErrors[ref] = "This agent is now \(status.rawValue). Nothing was sent."
+            return
+        }
+        guard !interruptingAgents.contains(ref) else { return }
+
+        markUserEngaged()
+        interruptErrors[ref] = nil
+        interruptingAgents.insert(ref)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.interruptingAgents.remove(ref) }
+            do {
+                try await runtime.interrupt(paneID: ref.paneID)
+                guard self.registry.runtime(for: ref) === runtime else { return }
+                self.interruptErrors[ref] = nil
+            } catch {
+                guard self.registry.runtime(for: ref) === runtime else { return }
+                self.interruptErrors[ref] =
+                    (error as? LocalizedError)?.errorDescription
+                    ?? String(describing: error)
+            }
+        }
     }
     func confirmSelectedDraftReuse() {
         guard let selected, let runtime = registry.runtime(for: selected) else { return }
@@ -754,6 +806,8 @@ extension NotchViewModel: SessionRuntimeHost {
 
     func sessionRuntimeWasRemoved(sessionID: String) {
         notificationController?.removeNotifications(sessionID: sessionID)
+        interruptingAgents = Set(interruptingAgents.filter { $0.sessionID != sessionID })
+        interruptErrors = interruptErrors.filter { $0.key.sessionID != sessionID }
     }
 
     /// Every row is visible in overview, while focused detail shows only its
@@ -792,6 +846,11 @@ extension NotchViewModel: SessionRuntimeHost {
             newlyFinishedCount: transitions.newlyFinishedPaneIDs.count,
             at: Date())
         compactSignalTracker = signalTracker
+        for paneID in transitions.newlyBlockedPaneIDs
+            + transitions.newlyFinishedPaneIDs {
+            let ref = AgentRef(sessionID: runtime.sessionID, paneID: paneID)
+            interruptErrors[ref] = nil
+        }
         for _ in transitions.newlyBlockedPaneIDs {
             soundEngine?.play(.blocked)
         }

@@ -195,7 +195,13 @@ private struct NotchFocusedSurface: View {
                 case .idle:
                     IdlePromptShelf(model: model)
                         .reportNotchHeight(.actionShelf)
-                case .working, .done, .unavailable:
+                case .working:
+                    if let item = snapshot.selectedItem {
+                        WorkingAgentActionShelf(model: model, item: item)
+                            .id(item.ref)
+                            .reportNotchHeight(.actionShelf)
+                    }
+                case .done, .unavailable:
                     EmptyView()
                 }
             }

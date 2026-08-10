@@ -382,6 +382,24 @@ struct SessionRuntimeIdentityTests {
         #expect(localRuntime !== remoteRuntime)
     }
 
+    @Test("interrupt availability is scoped by full agent reference")
+    func interruptAvailabilityUsesSessionAndPane() {
+        let model = NotchViewModel()
+        model.registry.apply([local("default"), remote("workbox")])
+
+        let localRef = AgentRef(sessionID: "local:default", paneID: "w1:p1")
+        let remoteRef = AgentRef(sessionID: "ssh:workbox/default", paneID: "w1:p1")
+        let localRuntime = model.registry.runtime(for: localRef)!
+        let remoteRuntime = model.registry.runtime(for: remoteRef)!
+        localRuntime.connection = .connected
+        remoteRuntime.connection = .connected
+        localRuntime.store.hydrate(Snapshot(panes: [pane(status: .working)]))
+        remoteRuntime.store.hydrate(Snapshot(panes: [pane(status: .idle)]))
+
+        #expect(model.canInterrupt(localRef))
+        #expect(!model.canInterrupt(remoteRef))
+    }
+
     @Test("an unreachable remote names the host so the error is actionable")
     func unreachableMessageNamesHost() {
         let localMessage = SessionRuntime.unreachableMessage(
@@ -392,5 +410,12 @@ struct SessionRuntimeIdentityTests {
                 serverSocketPath: "/home/you/.config/herdr/herdr.sock"))
         #expect(localMessage == "Couldn't reach herdr — is it running?")
         #expect(remoteMessage.contains("workbox"))
+    }
+
+    private func pane(status: AgentStatus) -> PaneInfo {
+        PaneInfo(
+            paneID: "w1:p1", terminalID: "term", workspaceID: "w1",
+            tabID: "w1:t1", focused: false, agentStatus: status,
+            revision: 1, agent: "codex")
     }
 }

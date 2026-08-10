@@ -14,12 +14,20 @@ public enum ActionResult: Sendable, Equatable {
 public enum ActionError: Error, Sendable {
     /// herdr rejected the keys (invalid key combo or `prefix+` binding) before writing.
     case keysRejected(message: String)
+    /// A fresh read could not prove that the target pane is still working.
+    case interruptPaneUnreadable(paneID: String)
+    /// The target changed state before the confirmed interrupt could be sent.
+    case interruptPaneNoLongerWorking(paneID: String, status: AgentStatus)
 }
 
 extension ActionError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case let .keysRejected(message): message
+        case let .interruptPaneUnreadable(paneID):
+            "Couldn't confirm that pane \(paneID) is still working. Nothing was sent."
+        case let .interruptPaneNoLongerWorking(_, status):
+            "This agent is now \(status.rawValue). Nothing was sent."
         }
     }
 }
@@ -60,6 +68,27 @@ public struct Actions: Sendable {
         let params = try PaneSendKeysParams(paneID: pane, keys: keys).asJSONValue()
         try await send("pane.send_keys", params: params)
         return .sent
+    }
+
+    /// Interrupt a currently-working agent by sending exactly one Escape key.
+    ///
+    /// A fresh `pane.get` narrows the race between presenting the confirmation and
+    /// writing to the terminal. herdr has no atomic interrupt-if-working method, so
+    /// this is the closest safe boundary available: if the pane can no longer be
+    /// proven to be working, no key is sent.
+    @discardableResult
+    public func interrupt(pane: String) async throws -> ActionResult {
+        let result = try await client.request(
+            "pane.get", params: FocusParams(paneID: pane).asJSONValue())
+        guard let value = result["pane"],
+              let info = try? value.decode(PaneInfo.self) else {
+            throw ActionError.interruptPaneUnreadable(paneID: pane)
+        }
+        guard info.agentStatus == .working else {
+            throw ActionError.interruptPaneNoLongerWorking(
+                paneID: pane, status: info.agentStatus)
+        }
+        return try await sendRawKeys(pane: pane, keys: ["esc"])
     }
 
     /// Cycle the selected agent's interaction mode. The agent remains the source
