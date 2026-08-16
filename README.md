@@ -1,3 +1,5 @@
+
+
 # NotchAgent
 
 A native macOS notch control surface for AI coding agents running under
@@ -285,7 +287,8 @@ swift run notchctl jump  <pane>              # focus the pane + present its term
 ```
 
 Global flags: `--json` (machine-readable output), `--sock <path>` (explicit
-socket path; otherwise resolved from `HERDR_SOCKET_PATH` → `HERDR_SESSION` →
+socket path), or `--session <name>` (resolve a local herdr session by name;
+otherwise resolved from `HERDR_SOCKET_PATH` → `HERDR_SESSION` →
 `~/.config/herdr/herdr.sock`).
 
 Example:
